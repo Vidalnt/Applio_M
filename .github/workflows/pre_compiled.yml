@@ -8,57 +8,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  Windows:
-    runs-on: windows-latest
-    strategy:
-      matrix:
-        python-version: ["3.11"]
-
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
-        run: |
-          .\run-install.bat
-          .\env\python.exe core.py "prerequisites" --pretraineds_hifigan "True" --models "True" --exe "True"
-      - name: Clean up unnecessary files
-        run: |
-          Remove-Item -Path 'LICENSE', 'run-tensorboard.sh', 'run-install.sh', 'run-applio.sh', 'run-install.bat', 'requirements.txt', '.gitignore', '.github', '.git' -Recurse -Force -ErrorAction SilentlyContinue
-          Get-ChildItem -Path . -Include __pycache__ -Recurse -Directory | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
-      - name: Read version from config.json
-        id: get-version
-        run: |
-          $version = (Get-Content -Path './assets/config.json' | ConvertFrom-Json).version
-          echo "version=$version" >> $env:GITHUB_OUTPUT
-      - name: Create ZIP file
-        run: |
-          $version = '${{ steps.get-version.outputs.version }}'
-          Compress-Archive -Path 'D:\a\Applio\Applio\*' -DestinationPath "D:\a\Applio\ApplioV$version.zip"
-      - name: Upload Windows Compiled
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          version: ${{ steps.get-version.outputs.version }}
-        run: |
-          .\env\python.exe -c "
-          import os
-          from huggingface_hub import login, upload_file
-          
-          token = os.getenv('HF_TOKEN')
-          version = os.getenv('version')
-          login(token)
-          repo_id = 'IAHispano/Applio'
-          repo_file_path = f'D:/a/Applio/ApplioV{version}.zip'
-          
-          upload_file(
-          commit_message=f'{version}',
-          path_or_fileobj=repo_file_path,
-          path_in_repo=f'Compiled/Windows/ApplioV{version}.zip',
-          repo_id=repo_id,
-          token=token)
-          "
   Linux:
     runs-on: ubuntu-latest
     strategy:
@@ -89,38 +38,7 @@ jobs:
           . .venv/bin/activate
           python -m ensurepip
           python -m pip install "pip<24.1"
-          python -m pip install -r requirements.txt
-          python -m pip install torch==2.7.1 torchvision torchaudio==2.7.1 --upgrade --index-url https://download.pytorch.org/whl/cu128
-          python core.py "prerequisites" --pretraineds_hifigan "True" --models "True" --exe "True"
-          find . -type f -name '*.py[co]' -delete -o -type d -name __pycache__ -delete
+          python -m pip install uv
+          python -m uv pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu128 --index-strategy unsafe-best-match
           deactivate
-          rm -f .venv/bin/Activate.ps1 .venv/bin/activate .venv/bin/activate.csh .venv/bin/activate.fish .venv/bin/pip .venv/bin/pip3 .venv/bin/pip3.10 .venv/bin/python .venv/bin/python3 .venv/bin/python3.10
-      - name: Clean up unnecessary files
-        run: |
-          rm -f LICENSE run-tensorboard.bat run-install.bat run-applio.bat run-install.sh requirements.txt .gitignore
-          rm -rf .github .git
-      - name: Create ZIP file
-        run: |
-          zip -9 -r ApplioV${{ steps.get-version.outputs.version }}.zip .
-      - name: Upload Linux Compiled
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          version: ${{ steps.get-version.outputs.version }}
-        run: |
-          python -c "
-          import os
-          from huggingface_hub import login, upload_file
-
-          token = os.getenv('HF_TOKEN')
-          version = os.getenv('version')
-          login(token)
-          repo_id = 'IAHispano/Applio'
-          repo_file_path = f'ApplioV{version}.zip'
-
-          upload_file(
-          commit_message=f'{version}',
-          path_or_fileobj=repo_file_path,
-          path_in_repo=f'Compiled/Linux/ApplioV{version}.zip',
-          repo_id=repo_id,
-          token=token)
-          "
+    
