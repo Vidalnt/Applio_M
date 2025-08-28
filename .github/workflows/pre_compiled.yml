@@ -8,7 +8,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  Linux:
+  UV:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -33,12 +33,83 @@ jobs:
           echo "version=$version" >> $GITHUB_OUTPUT
       - name: Create virtual environment
         run: |
-          pip install huggingface_hub
+          python -m pip install uv
+          uv venv .venv
+          uv pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu128 --index-strategy unsafe-best-match
+          uv run core.py "prerequisites" --pretraineds_hifigan "True" --models "True" --exe "True"
+          find . -type f -name '*.py[co]' -delete -o -type d -name __pycache__ -delete
+      - name: Clean up unnecessary files
+        run: |
+          rm -f LICENSE run-tensorboard.bat run-install.bat run-applio.bat run-install.sh requirements.txt .gitignore
+          rm -rf .github .git
+      - name: Create ZIP file
+        run: |
+          zip -9 -r ApplioV${{ steps.get-version.outputs.version }}.zip .
+      - name: Check Linux Compiled ZIP size
+        env:
+          version: ${{ steps.get-version.outputs.version }}
+        run: |
+          python -c "
+          import os
+
+          version = os.getenv('version')
+          zip_file = f'ApplioV{version}.zip'
+          size_mb = os.path.getsize(zip_file) / (1024 * 1024)
+          print(f'ZIP file: {zip_file}')
+          print(f'Size: {size_mb:.2f} MB')
+          "
+  PIP_UV:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free up space on runner
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Read version from config.json
+        id: get-version
+        run: |
+          version=$(jq -r '.version' assets/config.json)
+          echo "version=$version" >> $GITHUB_OUTPUT
+      - name: Create virtual environment
+        run: |
           python -m venv .venv
           . .venv/bin/activate
           python -m ensurepip
-          python -m pip install "pip<24.1"
           python -m pip install uv
           python -m uv pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu128 --index-strategy unsafe-best-match
+          python core.py "prerequisites" --pretraineds_hifigan "True" --models "True" --exe "True"
+          find . -type f -name '*.py[co]' -delete -o -type d -name __pycache__ -delete
           deactivate
+          rm -f .venv/bin/Activate.ps1 .venv/bin/activate .venv/bin/activate.csh .venv/bin/activate.fish .venv/bin/pip .venv/bin/pip3 .venv/bin/pip3.10 .venv/bin/python .venv/bin/python3 .venv/bin/python3.10
+      - name: Clean up unnecessary files
+        run: |
+          rm -f LICENSE run-tensorboard.bat run-install.bat run-applio.bat run-install.sh requirements.txt .gitignore
+          rm -rf .github .git
+      - name: Create ZIP file
+        run: |
+          zip -9 -r ApplioV${{ steps.get-version.outputs.version }}.zip .
+      - name: Check Linux Compiled ZIP size
+        env:
+          version: ${{ steps.get-version.outputs.version }}
+        run: |
+          python -c "
+          import os
+
+          version = os.getenv('version')
+          zip_file = f'ApplioV{version}.zip'
+          size_mb = os.path.getsize(zip_file) / (1024 * 1024)
+          print(f'ZIP file: {zip_file}')
+          print(f'Size: {size_mb:.2f} MB')
+          "
     
