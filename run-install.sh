@@ -96,30 +96,27 @@ create_venv() {
     log_message "Creating virtual environment..."
     py=$(find_python)
 
-    "$py" -m venv .venv
+    "$py" pip install uv
+    uv venv .venv
 
     log_message "Activating virtual environment..."
     source .venv/bin/activate
 
     # Install pip if necessary and upgrade
-    log_message "Ensuring pip is installed..."
-    python -m ensurepip --upgrade || {
-        log_message "ensurepip failed, attempting manual pip installation..."
-        curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
-        python get-pip.py
-    }
-    python -m pip install --upgrade pip
+    uv pip install --upgrade pip
 
     install_ffmpeg
     install_python_ffmpeg  
 
     log_message "Installing dependencies..."
     if [ -f "requirements.txt" ]; then
-        python -m pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu128
+        uv pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu128 --index-strategy unsafe-best-match
     else
         log_message "requirements.txt not found. Please ensure it exists."
         exit 1
     fi
+
+    deactivate
 
     finish
 }
@@ -134,7 +131,9 @@ finish() {
             package_name=$(echo "${package}" | sed 's/[<>=!].*//')
             if ! echo "${installed_packages}" | grep -q "${package_name}"; then
                 log_message "${package_name} not found. Attempting to install..."
-                python -m pip install --upgrade "${package}"
+                source .venv/bin/activate
+                uv pip install --upgrade "${package}"
+                deactivate
             fi
         done < "requirements.txt"
     else
