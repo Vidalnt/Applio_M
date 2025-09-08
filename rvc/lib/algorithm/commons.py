@@ -136,3 +136,7 @@ def grad_norm(parameters, norm_type: float = 2.0):
     return torch.linalg.vector_norm(
         torch.stack([p.grad.norm(norm_type) for p in parameters]), ord=norm_type
     ).item()
+
+def subsequent_mask(length):
+    mask = torch.tril(torch.ones(length, length)).unsqueeze(0).unsqueeze(0)
+    return mask

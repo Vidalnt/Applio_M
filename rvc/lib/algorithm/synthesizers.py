@@ -5,7 +5,7 @@ from rvc.lib.algorithm.generators.hifigan_nsf import HiFiGANNSFGenerator
 from rvc.lib.algorithm.generators.hifigan import HiFiGANGenerator
 from rvc.lib.algorithm.generators.refinegan import RefineGANGenerator
 from rvc.lib.algorithm.commons import slice_segments, rand_slice_segments
-from rvc.lib.algorithm.residuals import ResidualCouplingBlock
+from rvc.lib.algorithm.residuals import ResidualCouplingBlock, ResidualCouplingTransformersBlock
 from rvc.lib.algorithm.encoders import TextEncoder, PosteriorEncoder
 
 
@@ -79,6 +79,7 @@ class Synthesizer(torch.nn.Module):
             p_dropout,
             text_enc_hidden_dim,
             f0=use_f0,
+            gin_channels=self.gin_channels
         )
         print(f"Using {vocoder} vocoder")
         if use_f0:
@@ -142,14 +143,29 @@ class Synthesizer(torch.nn.Module):
             16,
             gin_channels=gin_channels,
         )
-        self.flow = ResidualCouplingBlock(
-            inter_channels,
-            hidden_channels,
-            5,
-            1,
-            3,
-            gin_channels=gin_channels,
-        )
+        self.vits = "2"
+        if self.vits == "1":
+            self.flow = ResidualCouplingBlock(
+                inter_channels,
+                hidden_channels,
+                5,
+                1,
+                3,
+                gin_channels=gin_channels,
+            )
+        elif self.vits == "2":
+            self.flow = ResidualCouplingTransformersBlock(
+                inter_channels,
+                hidden_channels,
+                5,
+                1,
+                3,
+                gin_channels=gin_channels,
+                use_transformer_flows=True,
+                transformer_flow_type="pre_conv2",
+            )
+
+        
         self.emb_g = torch.nn.Embedding(spk_embed_dim, gin_channels)
 
     def _remove_weight_norm_from(self, module):
