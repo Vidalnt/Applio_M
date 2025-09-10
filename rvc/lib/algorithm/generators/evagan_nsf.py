@@ -100,12 +100,12 @@ class EvaGanGenerator(torch.nn.Module):
             for b in range(depth):
                 blocks.append(ConvNeXtBlock(dim=dim, kernel_size=7, expansion=4, drop_path=dpr[idx]))
                 idx += 1
-            stages.append(nn.Sequential(*blocks))
+            stages.append(torch.nn.Sequential(*blocks))
             # transition to next dim (if next dim exists and differs)
             if i + 1 < len(cam_dims) and cam_dims[i+1] != dim:
-                stages.append(nn.Sequential(LayerNorm(dim), nn.Conv1d(dim, cam_dims[i+1], kernel_size=1)))
+                stages.append(torch.nn.Sequential(LayerNorm(dim), torch.nn.Conv1d(dim, cam_dims[i+1], kernel_size=1)))
 
-        self.cam_stages = nn.ModuleList(stages)
+        self.cam_stages = torch.nn.ModuleList(stages)
         assert cam_dims[-1] == upsample_initial_channel, \
             f"CAM out dim {cam_dims[-1]} must equal upsample_initial_channel {upsample_initial_channel}"
         
