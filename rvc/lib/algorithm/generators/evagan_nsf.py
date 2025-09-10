@@ -79,7 +79,8 @@ class EvaGanGenerator(torch.nn.Module):
         sr: int,
         checkpointing: bool = False,
     ):
-        super().__init__()
+        super(EvaGanGenerator, self).__init__()
+        
         self.num_kernels = len(resblock_kernel_sizes)
         self.num_upsamples = len(upsample_rates)
         self.checkpointing = checkpointing
