@@ -63,10 +63,53 @@ class EvaResBlock(ResBlock):
             x = x + xt_residual
         return apply_mask(x, x_mask)
 
+
+class ContextAwareModule(torch.nn.Module):
+    def __init__(self, dims=[128, 256, 384, 512], depths=[3, 3, 9, 3], drop_path_rate=0.2):
+        super().__init__()
+        
+        total_blocks = sum(depths)
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, total_blocks)]
+        
+        self.stages = torch.nn.ModuleList()
+        current_dim = dims[0]
+        idx = 0
+        
+        for i, depth in enumerate(depths):
+            blocks = []
+            for j in range(depth):
+                blocks.append(ConvNeXtBlock(
+                    dim=current_dim, 
+                    drop_path=dpr[idx + j]
+                ))
+            self.stages.append(torch.nn.Sequential(*blocks))
+            
+            # Perform dimension transition if necessary
+            if i < len(dims) - 1 and dims[i+1] != current_dim:
+                self.stages.append(torch.nn.Sequential(
+                    LayerNorm(current_dim),
+                    nn.Conv1d(current_dim, dims[i+1], kernel_size=1)
+                ))
+                current_dim = dims[i+1]
+            
+            idx += depth
+        self.apply(self._init_weights)
+    
+    def _init_weights(self, m):
+        if isinstance(m, (nn.Conv1d, nn.Linear)):
+            nn.init.kaiming_normal_(m.weight)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+    
+    def forward(self, x):
+        for stage in self.stages:
+            x = stage(x)
+        return x
+
 class EvaGanGenerator(torch.nn.Module):
     def __init__(
         self,
-        initial_channel: int,
+        initial_channel: int, #128
         cam_depths: List[int], #[3, 3, 9, 3] 
         cam_dims: List[int], #[128, 256, 384, 512]
         drop_path_rate: float, #0.2
@@ -90,26 +133,13 @@ class EvaGanGenerator(torch.nn.Module):
         self.conv_pre = torch.nn.Conv1d(
             initial_channel, cam_dims[0], 7, 1, padding=3
         )
+        self.norm_pre = LayerNorm(cam_dims[0])
 
-        total_blocks = sum(cam_depths)
-        dpr = [float(x) for x in torch.linspace(0.0, drop_path_rate, total_blocks)]
-        idx = 0
-        stages = []
-        for i, (depth, dim) in enumerate(zip(cam_depths, cam_dims)):
-            # add stage blocks
-            blocks = []
-            for b in range(depth):
-                blocks.append(ConvNeXtBlock(dim=dim, kernel_size=7, expansion=4, drop_path=dpr[idx]))
-                idx += 1
-            stages.append(torch.nn.Sequential(*blocks))
-            # transition to next dim (if next dim exists and differs)
-            if i + 1 < len(cam_dims) and cam_dims[i+1] != dim:
-                stages.append(torch.nn.Sequential(LayerNorm(dim), torch.nn.Conv1d(dim, cam_dims[i+1], kernel_size=1)))
+        self.cam = ContextAwareModule(cam_dims, cam_depths, drop_path_rate)
 
-        self.cam_stages = torch.nn.ModuleList(stages)
         assert cam_dims[-1] == upsample_initial_channel, \
             f"CAM out dim {cam_dims[-1]} must equal upsample_initial_channel {upsample_initial_channel}"
-        
+
         self.ups = torch.nn.ModuleList()
         self.noise_convs = torch.nn.ModuleList()
 
@@ -190,15 +220,19 @@ class EvaGanGenerator(torch.nn.Module):
         har_source = har_source.transpose(1, 2)
         # new tensor
         x = self.conv_pre(x)
+        # Initial normalization for stability
+        x = self.norm_pre(x) 
 
-        for stage in self.cam_stages:
-            x = stage(x)
+        if self.training and self.checkpointing:
+            x = checkpoint(self.cam, x, use_reentrant=False)
+        else:
+            x = self.cam(x)
 
         if g is not None:
             x = x + self.cond(g)
 
         for i, (ups, noise_convs) in enumerate(zip(self.ups, self.noise_convs)):
-            x = torch.nn.functional.SiLU(x)
+            x = torch.nn.functional.silu(x)
             # Apply upsampling layer
             if self.training and self.checkpointing:
                 x = checkpoint(ups, x, use_reentrant=False)
@@ -222,7 +256,7 @@ class EvaGanGenerator(torch.nn.Module):
                 )
             x = xs / self.num_kernels
 
-        x = torch.nn.functional.SiLU(x)
+        x = torch.nn.functional.silu(x)
         x = torch.tanh(self.conv_post(x))
 
         return x
