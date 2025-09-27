@@ -1,9 +1,8 @@
 from whisper.model import Whisper, ModelDimensions
 from whisper.audio import log_mel_spectrogram
 import torch
-from torch import nn
 
-class WhisperModel(nn.Module):
+class WhisperModel(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.model = None
@@ -12,7 +11,7 @@ class WhisperModel(nn.Module):
     def load_checkpoint(self, model_path):
         checkpoint = torch.load(model_path, map_location="cpu")
         dims = ModelDimensions(**checkpoint["dims"])
-        self.final_proj = nn.Linear(dims.n_text_state, 768)
+        self.final_proj = torch.nn.Linear(dims.n_text_state, 768)
         self.model = Whisper(dims)
         self.model.load_state_dict(checkpoint["model_state_dict"])
         del self.model.decoder
