@@ -15,7 +15,7 @@ class WhisperModel(nn.Module):
         self.final_proj = nn.Linear(dims.n_text_state, 768)
         self.model = Whisper(dims)
         self.model.load_state_dict(checkpoint["model_state_dict"])
-        # del self.model.decoder
+        del self.model.decoder
         # cut = len(self.model.encoder.blocks) // 4
         # cut = -1 * cut
         # del self.model.encoder.blocks[cut:]
