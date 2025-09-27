@@ -11,6 +11,7 @@ from torch import nn
 
 import logging
 from transformers import HubertModel
+from whisper.model import Whisper, ModelDimensions
 import warnings
 
 # Remove this to see warnings about transformers models
@@ -154,3 +155,10 @@ def load_embedding(embedder_model, custom_embedder=None):
 
     models = HubertModelWithFinalProj.from_pretrained(model_path)
     return models
+
+def load_whisper_model(path, device):
+    checkpoint = torch.load(path, map_location=device)
+    dims = ModelDimensions(**checkpoint["dims"])
+    model = Whisper(dims)
+    model.load_state_dict(checkpoint["model_state_dict"])
+    return model.to(device)

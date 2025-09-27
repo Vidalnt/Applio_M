@@ -16,7 +16,8 @@ sys.path.append(os.path.join(now_dir))
 # Zluda hijack
 import rvc.lib.zluda
 
-from rvc.lib.utils import load_audio_16k, load_embedding
+from rvc.lib.utils import load_audio_16k, load_embedding, load_whisper_model
+from whisper.audio import log_mel_spectrogram
 from rvc.train.extract.preparing_files import generate_config, generate_filelist
 from rvc.lib.predictors.f0 import CREPE, FCPE, RMVPE
 from rvc.configs.config import Config
@@ -151,9 +152,7 @@ def run_embedding_extraction(
     files, devices, embedder_model, embedder_model_custom, threads
 ):
     devices_str = ", ".join(devices)
-    print(
-        f"Starting embedding extraction with {num_processes} cores on {devices_str}..."
-    )
+    print(f"Starting embedding extraction with {threads} cores on {devices_str}...")
     start_time = time.time()
     with concurrent.futures.ProcessPoolExecutor(max_workers=len(devices)) as executor:
         tasks = [
@@ -171,6 +170,56 @@ def run_embedding_extraction(
         concurrent.futures.wait(tasks)
 
     print(f"Embedding extraction completed in {time.time() - start_time:.2f} seconds.")
+
+
+def process_file_whisper(files, model_path, device_num, device, n_threads):
+    model = load_whisper_model(model_path, device)
+    model.eval()
+    n_threads = max(1, n_threads)
+
+    def worker(file_info):
+        wav_file_path, _, _, out_file_path = file_info
+        out_file_path = out_file_path.replace(".npy", "_whisper.pt.npy")
+        if os.path.exists(out_file_path):
+            return
+        audio = load_audio_16k(wav_file_path)
+        audio_length = audio.shape[0]
+        ppg_length = audio_length // 320
+        mel = log_mel_spectrogram(audio).to(model.device)
+        with torch.no_grad():
+            ppg = model.encoder(mel.unsqueeze(0)).squeeze().data.cpu().float().numpy()
+        ppg = ppg[:ppg_length,]
+        if not np.isnan(ppg).any():
+            np.save(out_file_path, ppg, allow_pickle=False)
+        else:
+            print(f"Error: {wav_file_path} produced NaN values; skipping.")
+
+    with tqdm.tqdm(total=len(files), leave=True, position=device_num) as pbar:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=n_threads) as executor:
+            futures = [executor.submit(worker, f) for f in files]
+            for _ in concurrent.futures.as_completed(futures):
+                pbar.update(1)
+
+
+def run_whisper_extraction(files, devices, model_path, threads):
+    devices_str = ", ".join(devices)
+    print(f"Starting Whisper extraction with {threads} cores on {devices_str}...")
+    start_time = time.time()
+    with concurrent.futures.ProcessPoolExecutor(max_workers=len(devices)) as executor:
+        tasks = [
+            executor.submit(
+                process_file_whisper,
+                files[i :: len(devices)],
+                model_path,
+                i,
+                devices[i],
+                threads // len(devices),
+            )
+            for i in range(len(devices))
+        ]
+        concurrent.futures.wait(tasks)
+
+    print(f"Whisper extraction completed in {time.time() - start_time:.2f} seconds.")
 
 
 if __name__ == "__main__":
@@ -216,9 +265,12 @@ if __name__ == "__main__":
 
     run_pitch_extraction(files, devices, f0_method, num_processes)
 
-    run_embedding_extraction(
-        files, devices, embedder_model, embedder_model_custom, num_processes
-    )
+    if embedder_model.lower() == "whisper":
+        run_whisper_extraction(files, devices, embedder_model_custom, num_processes)
+    else:
+        run_embedding_extraction(
+            files, devices, embedder_model, embedder_model_custom, num_processes
+        )
 
     generate_config(sample_rate, exp_dir)
     generate_filelist(exp_dir, sample_rate, include_mutes)
