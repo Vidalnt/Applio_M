@@ -538,6 +538,7 @@ def train_tab():
                     "chinese-hubert-base",
                     "japanese-hubert-base",
                     "korean-hubert-base",
+                    "whisper",
                     "custom",
                 ],
                 value="contentvec",

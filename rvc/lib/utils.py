@@ -11,7 +11,6 @@ from torch import nn
 
 import logging
 from transformers import HubertModel
-from whisper.model import Whisper, ModelDimensions
 import warnings
 
 # Remove this to see warnings about transformers models
@@ -107,6 +106,7 @@ def format_title(title):
 def load_embedding(embedder_model, custom_embedder=None):
     embedder_root = os.path.join(now_dir, "rvc", "models", "embedders")
     embedding_list = {
+        "whisper": os.path.join(embedder_root, "whisper"),
         "contentvec": os.path.join(embedder_root, "contentvec"),
         "spin": os.path.join(embedder_root, "spin"),
         "spin-v2": os.path.join(embedder_root, "spin-v2"),
@@ -139,6 +139,12 @@ def load_embedding(embedder_model, custom_embedder=None):
         else:
             print(f"Custom embedder not found: {custom_embedder}, using contentvec")
             model_path = embedding_list["contentvec"]
+    elif embedder_model == "whisper":
+        from rvc.lib.algorithm.embedders.whisper import WhisperModel
+        models = WhisperModel()
+        model_path = os.path.join(embedding_list[embedder_model])
+        models.load_checkpoint(model_path=model_path)
+        return models
     else:
         model_path = embedding_list[embedder_model]
         bin_file = os.path.join(model_path, "pytorch_model.bin")
@@ -155,10 +161,3 @@ def load_embedding(embedder_model, custom_embedder=None):
 
     models = HubertModelWithFinalProj.from_pretrained(model_path)
     return models
-
-def load_whisper_model(path, device):
-    checkpoint = torch.load(path, map_location=device)
-    dims = ModelDimensions(**checkpoint["dims"])
-    model = Whisper(dims)
-    model.load_state_dict(checkpoint["model_state_dict"])
-    return model.to(device)
