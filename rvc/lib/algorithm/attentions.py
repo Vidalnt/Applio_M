@@ -1,6 +1,8 @@
 import math
 import torch
-from rvc.lib.algorithm.commons import convert_pad_shape, fused_add_tanh_sigmoid_multiply
+from rvc.lib.algorithm.commons import convert_pad_shape, fused_add_tanh_sigmoid_multiply, subsequent_mask
+from torch.nn.utils import remove_weight_norm, weight_norm
+from rvc.lib.algorithm.normalization import LayerNorm
 
 class MultiHeadAttention(torch.nn.Module):
     """
@@ -241,7 +243,7 @@ class FFN(torch.nn.Module):
             x, convert_pad_shape([[0, 0], [0, 0], [pad, pad]])
         )
 
-class Depthwise_Separable_Conv1D(nn.Module):
+class Depthwise_Separable_Conv1D(torch.nn.Module):
     def __init__(
         self,
         in_channels,
@@ -290,7 +292,7 @@ class Depthwise_Separable_Conv1D(nn.Module):
         self.point_conv = remove_weight_norm(self.point_conv, name="weight")
 
 
-class Depthwise_Separable_TransposeConv1D(nn.Module):
+class Depthwise_Separable_TransposeConv1D(torch.nn.Module):
     def __init__(
         self,
         in_channels,
@@ -359,7 +361,7 @@ def remove_weight_norm_modules(module, name="weight"):
         remove_weight_norm(module, name)
 
 
-class FFT(nn.Module):
+class FFT(torch.nn.Module):
     def __init__(
         self,
         hidden_channels,

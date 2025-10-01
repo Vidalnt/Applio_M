@@ -262,7 +262,7 @@ class ResidualCouplingLayer(torch.nn.Module):
     def remove_weight_norm(self):
         self.enc.remove_weight_norm()
 
-class ResidualCouplingTransformersLayer2(nn.Module):  # vits2
+class ResidualCouplingTransformersLayer2(torch.nn.Module):  # vits2
     def __init__(
         self,
         channels,
@@ -329,7 +329,7 @@ class ResidualCouplingTransformersLayer2(nn.Module):  # vits2
             return x
 
 
-class ResidualCouplingTransformersLayer(nn.Module):  # vits2
+class ResidualCouplingTransformersLayer(torch.nn.Module):  # vits2
     def __init__(
         self,
         channels,
@@ -413,7 +413,7 @@ class ResidualCouplingTransformersLayer(nn.Module):  # vits2
             return x
 
 
-class FFTransformerCouplingLayer(nn.Module):  # vits2
+class FFTransformerCouplingLayer(torch.nn.Module):  # vits2
     def __init__(
         self,
         channels,
@@ -473,7 +473,7 @@ class FFTransformerCouplingLayer(nn.Module):  # vits2
             return x
 
 
-class MonoTransformerFlowLayer(nn.Module):  # vits2
+class MonoTransformerFlowLayer(torch.nn.Module):  # vits2
     def __init__(
         self,
         channels,
@@ -560,7 +560,7 @@ class MonoTransformerFlowLayer(nn.Module):  # vits2
                 return x
 
 
-class ResidualCouplingTransformersBlock(nn.Module):  # vits2
+class ResidualCouplingTransformersBlock(torch.nn.Module):  # vits2
     def __init__(
         self,
         channels,
