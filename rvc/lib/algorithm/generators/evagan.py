@@ -17,11 +17,14 @@ class LayerNorm(torch.nn.Module):
         self.weight = torch.nn.Parameter(torch.ones(normalized_shape))
         self.bias = torch.nn.Parameter(torch.zeros(normalized_shape))
         self.eps = eps
-        self.normalized_shape = (normalized_shape, )
+        self.normalized_shape = (normalized_shape,)
 
     def forward(self, x):
-        # x.shape = (B, C, T) -> transpose to (B, T, C) for F.layer_norm
-        return torch.nn.functional.layer_norm(x.transpose(1, 2), self.normalized_shape, self.weight, self.bias, self.eps).transpose(1, 2)
+        # x.shape = (B, C, T) -> transpose to (B, T, C) for layer_norm
+        return torch.nn.functional.layer_norm(
+            x.transpose(1, 2), self.normalized_shape, self.weight, self.bias, self.eps
+        ).transpose(1, 2)
+
 
 class ConvNeXtBlock(torch.nn.Module):
     """
@@ -46,6 +49,7 @@ class ConvNeXtBlock(torch.nn.Module):
         x = self.pw_conv2(x)
         x = input + self.drop_path(x)
         return x
+
 
 class EvaResBlock(ResBlock):
     def __init__(self, channels: int, kernel_size: int = 3, dilations: Tuple[int] = (1, 3, 5)):
@@ -88,7 +92,7 @@ class ContextAwareModule(torch.nn.Module):
             if i < len(dims) - 1 and dims[i+1] != current_dim:
                 self.stages.append(torch.nn.Sequential(
                     LayerNorm(current_dim),
-                    nn.Conv1d(current_dim, dims[i+1], kernel_size=1)
+                    torch.nn.Conv1d(current_dim, dims[i+1], kernel_size=1)
                 ))
                 current_dim = dims[i+1]
             
@@ -96,10 +100,10 @@ class ContextAwareModule(torch.nn.Module):
         self.apply(self._init_weights)
     
     def _init_weights(self, m):
-        if isinstance(m, (nn.Conv1d, nn.Linear)):
-            nn.init.kaiming_normal_(m.weight)
+        if isinstance(m, (torch.nn.Conv1d, torch.nn.Linear)):
+            torch.nn.init.kaiming_normal_(m.weight)
             if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
+                torch.nn.init.constant_(m.bias, 0)
     
     def forward(self, x):
         for stage in self.stages:

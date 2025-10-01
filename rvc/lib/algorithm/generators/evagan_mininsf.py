@@ -11,6 +11,7 @@ from rvc.lib.algorithm.generators.hifigan_nsf import SourceModuleHnNSF
 from rvc.lib.algorithm.residuals import apply_mask, ResBlock
 from timm.models.layers import DropPath
 
+
 class LayerNorm(torch.nn.Module):
     def __init__(self, normalized_shape, eps=1e-6):
         super().__init__()
@@ -110,13 +111,14 @@ class ContextAwareModule(torch.nn.Module):
             x = stage(x)
         return x
 
+
 class EvaGanGenerator(torch.nn.Module):
     def __init__(
         self,
-        initial_channel: int, #128
-        cam_depths: List[int], #[3, 3, 9, 3] 
-        cam_dims: List[int], #[128, 256, 384, 512]
-        drop_path_rate: float, #0.2
+        initial_channel: int,  # 128
+        cam_depths: List[int],  # [3, 3, 9, 3]
+        cam_dims: List[int],  # [128, 256, 384, 512]
+        drop_path_rate: float,  # 0.2
         resblock_kernel_sizes: list,
         resblock_dilation_sizes: list,
         upsample_rates: list,
@@ -131,8 +133,7 @@ class EvaGanGenerator(torch.nn.Module):
         self.num_kernels = len(resblock_kernel_sizes)
         self.num_upsamples = len(upsample_rates)
         self.checkpointing = checkpointing
-        self.f0_upsamp = torch.nn.Upsample(scale_factor=math.prod(upsample_rates))
-        self.m_source = SourceModuleHnNSF(sample_rate=sr, harmonic_num=0)
+        self.source_sr = sr / int(math.prod(upsample_rates[2:]))
 
         self.conv_pre = torch.nn.Conv1d(
             initial_channel, cam_dims[0], 7, 1, padding=3
@@ -145,21 +146,15 @@ class EvaGanGenerator(torch.nn.Module):
             f"CAM out dim {cam_dims[-1]} must equal upsample_initial_channel {upsample_initial_channel}"
 
         self.ups = torch.nn.ModuleList()
-        self.noise_convs = torch.nn.ModuleList()
 
         channels = [
             upsample_initial_channel // (2 ** (i + 1))
-            for i in range(len(upsample_rates))
-        ]
-        stride_f0s = [
-            math.prod(upsample_rates[i + 1 :]) if i + 1 < len(upsample_rates) else 1
             for i in range(len(upsample_rates))
         ]
 
         for i, (u, k) in enumerate(zip(upsample_rates, upsample_kernel_sizes)):
             # handling odd upsampling rates
             if u % 2 == 0:
-                # old method
                 padding = (k - u) // 2
             else:
                 padding = u // 2 + u % 2
@@ -176,30 +171,6 @@ class EvaGanGenerator(torch.nn.Module):
                     )
                 )
             )
-            """ handling odd upsampling rates
-            #  s   k   p
-            # 40  80  20
-            # 32  64  16
-            #  4   8   2
-            #  2   3   1
-            # 63 125  31
-            #  9  17   4
-            #  3   5   1
-            #  1   1   0
-            """
-            stride = stride_f0s[i]
-            kernel = 1 if stride == 1 else stride * 2 - stride % 2
-            padding = 0 if stride == 1 else (kernel - stride) // 2
-
-            self.noise_convs.append(
-                torch.nn.Conv1d(
-                    1,
-                    channels[i],
-                    kernel_size=kernel,
-                    stride=stride,
-                    padding=padding,
-                )
-            )
 
         self.resblocks = torch.nn.ModuleList(
             [
@@ -209,23 +180,35 @@ class EvaGanGenerator(torch.nn.Module):
             ]
         )
 
+        self.source_conv = torch.nn.Conv1d(1, channels[1], kernel_size=1)
+        self.source_conv.apply(init_weights)
+
         self.conv_post = torch.nn.Conv1d(channels[-1], 1, 7, 1, padding=3, bias=False)
         self.ups.apply(init_weights)
 
         if gin_channels != 0:
             self.cond = torch.nn.Conv1d(gin_channels, upsample_initial_channel, 1)
 
-        self.upp = math.prod(upsample_rates)
+        self.upp = int(math.prod(upsample_rates[:2]))
+
+    def fastsinegen(self, f0):
+        n = torch.arange(1, self.upp + 1, device=f0.device)
+        s0 = f0.unsqueeze(-1) / self.source_sr
+        ds0 = torch.nn.functional.pad(s0[:, 1:, :] - s0[:, :-1, :], (0, 0, 0, 1))
+        rad = s0 * n + 0.5 * ds0 * n * (n - 1) / self.upp
+        rad2 = torch.fmod(rad[..., -1:].float() + 0.5, 1.0) - 0.5
+        rad_acc = rad2.cumsum(dim=1).fmod(1.0).to(f0)
+        rad += torch.nn.functional.pad(rad_acc[:, :-1, :], (0, 0, 1, 0))
+        rad = rad.reshape(f0.shape[0], 1, -1)
+        sines = torch.sin(2 * math.pi * rad)
+        return sines
 
     def forward(
         self, x: torch.Tensor, f0: torch.Tensor, g: Optional[torch.Tensor] = None
     ):
-        har_source, _, _ = self.m_source(f0, self.upp)
-        har_source = har_source.transpose(1, 2)
-        # new tensor
+        har_source = self.fastsinegen(f0)
         x = self.conv_pre(x)
-        # Initial normalization for stability
-        x = self.norm_pre(x) 
+        x = self.norm_pre(x)
 
         if self.training and self.checkpointing:
             x = checkpoint(self.cam, x, use_reentrant=False)
@@ -235,12 +218,13 @@ class EvaGanGenerator(torch.nn.Module):
         if g is not None:
             x = x + self.cond(g)
 
-        for i, (ups, noise_convs) in enumerate(zip(self.ups, self.noise_convs)):
+        for i, ups in enumerate(self.ups):
             x = torch.nn.functional.silu(x)
-            # Apply upsampling layer
+
             if self.training and self.checkpointing:
                 x = checkpoint(ups, x, use_reentrant=False)
-                x = x + noise_convs(har_source)
+                if i == 1:
+                    x = x + self.source_conv(har_source)
                 xs = sum(
                     [
                         checkpoint(resblock, x, use_reentrant=False)
@@ -250,7 +234,8 @@ class EvaGanGenerator(torch.nn.Module):
                 )
             else:
                 x = ups(x)
-                x = x + noise_convs(har_source)
+                if i == 1:
+                    x = x + self.source_conv(har_source)
                 xs = sum(
                     [
                         resblock(x)
