@@ -411,6 +411,8 @@ class SpikingVocosRVCGenerator(nn.Module):
         self.snn_timestep = snn_timestep
         self.hop_length = hop_length
         self.n_fft = n_fft
+
+        self.pad = nn.ReflectionPad1d([1, 0])
         
         # Use SpikingVocosBackbone with gin_channels support
         self.backbone = SpikingVocosBackbone(
@@ -442,6 +444,8 @@ class SpikingVocosRVCGenerator(nn.Module):
         # x: [B, initial_channel, T_in] where T_in corresponds to time steps of features
         # f0: [B, T_in] fundamental frequency
         # g: [B, gin_channels, 1] global conditioning (speaker embedding)
+
+        x = self.pad(x) # [B, initial_channel, T_in_original] -> [B, initial_channel, T_in_padded]
         
         # Forward through SpikingVocosBackbone
         # Output shape: [B, L, dim] where L is the sequence length (same as input T_in)
