@@ -50,6 +50,7 @@ save_every_epoch = int(sys.argv[2])
 total_epoch = int(sys.argv[3])
 pretrainG = sys.argv[4]
 pretrainD = sys.argv[5]
+pretrainE = sys.argv[5].replace('D', 'E')
 gpus = sys.argv[6]
 batch_size = int(sys.argv[7])
 sample_rate = int(sys.argv[8])
@@ -213,6 +214,7 @@ def main():
                         experiment_dir,
                         pretrainG,
                         pretrainD,
+                        pretrainE,
                         total_epoch,
                         save_every_weights,
                         config,
@@ -300,6 +302,7 @@ def run(
     experiment_dir,
     pretrainG,
     pretrainD,
+    pretrainE,
     custom_total_epoch,
     custom_save_every_weights,
     config,
@@ -315,6 +318,7 @@ def run(
         experiment_dir (str): The directory where experiment logs and checkpoints will be saved.
         pretrainG (str): Path to the pre-trained generator model.
         pretrainD (str): Path to the pre-trained discriminator model.
+        pretrainE (str): Path to the pre-trained discriminator model.
         custom_total_epoch (int): The total number of epochs for training.
         custom_save_every_weights (int): The interval (in epochs) at which to save model weights.
         config (object): Configuration object containing training parameters.
@@ -409,7 +413,7 @@ def run(
     config.model.spk_embed_dim = spk_dim
 
     # Initialize models and optimizers
-    from rvc.lib.algorithm.discriminators import MultiPeriodDiscriminator
+    from rvc.lib.algorithm.discriminators import MultiPeriodDiscriminator, MultiResolutionDiscriminator
     from rvc.lib.algorithm.synthesizers import Synthesizer
 
     net_g = Synthesizer(
@@ -426,13 +430,16 @@ def run(
     net_d = MultiPeriodDiscriminator(
         config.model.use_spectral_norm, checkpointing=checkpointing
     )
+    net_d_mrd = MultiResolutionDiscriminator()
 
     if torch.cuda.is_available():
         net_g = net_g.cuda(device_id)
         net_d = net_d.cuda(device_id)
+        net_d_mrd = net_d_mrd.cuda(device_id)
     else:
         net_g = net_g.to(device)
         net_d = net_d.to(device)
+        net_d_mrd = net_d_mrd.to(device)
 
     if bf16_adamw == True and train_dtype == torch.bfloat16:
         print("Using BFload16 AdamW optimizer")
@@ -450,7 +457,7 @@ def run(
         eps=config.train.eps,
     )
     optim_d = optimizer(
-        net_d.parameters(),
+        list(net_d.parameters()) + list(net_d_mrd.parameters()),
         config.train.learning_rate * d_lr_coeff,
         betas=config.train.betas,
         eps=config.train.eps,
@@ -466,6 +473,7 @@ def run(
     if n_gpus > 1 and device.type == "cuda":
         net_g = DDP(net_g, device_ids=[device_id])
         net_d = DDP(net_d, device_ids=[device_id])
+        net_d_mrd = DDP(net_d_mrd, device_ids=[device_id])
 
     if rank == 0 and train_dtype == torch.bfloat16:
         print("Using BFloat16 for training.")
@@ -478,6 +486,9 @@ def run(
         print("Starting training...")
         _, _, _, epoch_str, scaler_dict = load_checkpoint(
             latest_checkpoint_path(experiment_dir, "D_*.pth"), net_d, optim_d
+        )
+        _, _, _, epoch_str, scaler_dict = load_checkpoint(
+            latest_checkpoint_path(experiment_dir, "E_*.pth"), net_d_mrd, optim_d
         )
         _, _, _, epoch_str, _ = load_checkpoint(
             latest_checkpoint_path(experiment_dir, "G_*.pth"), net_g, optim_g
@@ -519,6 +530,25 @@ def run(
                     net_d.module.load_state_dict(ckpt)
                 else:
                     net_d.load_state_dict(ckpt)
+                del ckpt
+            except Exception as e:
+                print(
+                    "The parameters of the pretrain model such as the sample rate or architecture do not match the selected model."
+                )
+                print(e)
+                sys.exit(1)
+
+        if pretrainE not in ("", "None"):
+            if rank == 0:
+                print(f"Loaded pretrained (E) '{pretrainE}'")
+            try:
+                ckpt = torch.load(pretrainE, map_location="cpu", weights_only=True)[
+                    "model"
+                ]
+                if hasattr(net_d_mrd, "module"):
+                    net_d_mrd.module.load_state_dict(ckpt)
+                else:
+                    net_d_mrd.load_state_dict(ckpt)
                 del ckpt
             except Exception as e:
                 print(
@@ -580,7 +610,7 @@ def run(
             rank,
             epoch,
             config,
-            [net_g, net_d],
+            [net_g, (net_d, net_d_mrd)],
             [optim_g, optim_d],
             [train_loader, None],
             [writer_eval],
@@ -636,7 +666,7 @@ def train_and_evaluate(
         consecutive_increases_gen = 0
         consecutive_increases_disc = 0
 
-    net_g, net_d = nets
+    net_g, (net_d, net_d_mrd) = nets
     optim_g, optim_d = optims
     train_loader = loaders[0] if loaders is not None else None
     if writers is not None:
@@ -708,17 +738,20 @@ def train_and_evaluate(
                     device_type="cuda", enabled=use_amp, dtype=train_dtype
                 ):
                     y_d_hat_r, y_d_hat_g, _, _ = net_d(wave, y_hat.detach())
+                    y_d_hat_r_mrd, y_d_hat_g_mrd, _, _ = net_d_mrd(wave, y_hat.detach())
                 loss_disc, _, _ = discriminator_loss(y_d_hat_r, y_d_hat_g)
+                loss_disc_mrd, _, _ = discriminator_loss(y_d_hat_r_mrd, y_d_hat_g_mrd)
+                loss_disc = loss_disc + loss_disc_mrd
                 # Discriminator backward and update
                 optim_d.zero_grad()
                 if train_dtype == torch.float16:
                     scaler.scale(loss_disc).backward()
                     scaler.unscale_(optim_d)
-                    grad_norm_d = commons.grad_norm(net_d.parameters())
+                    grad_norm_d = commons.grad_norm(list(net_d.parameters()) + list(net_d_mrd.parameters()))
                     scaler.step(optim_d)
                 else:
                     loss_disc.backward()
-                    grad_norm_d = commons.grad_norm(net_d.parameters())
+                    grad_norm_d = commons.grad_norm(list(net_d.parameters()) + list(net_d_mrd.parameters()))
                     optim_d.step()
 
             with torch.amp.autocast(
@@ -726,6 +759,7 @@ def train_and_evaluate(
             ):
                 # Generator backward and update
                 _, y_d_hat_g, fmap_r, fmap_g = net_d(wave, y_hat)
+                _, y_d_hat_g_mrd, fmap_r_mrd, fmap_g_mrd = net_d_mrd(wave, y_hat)
 
             if multiscale_mel_loss:
                 loss_mel = fn_mel_loss(wave, y_hat) * config.train.c_mel / 3.0
@@ -753,8 +787,10 @@ def train_and_evaluate(
                 loss_mel = fn_mel_loss(wave_mel, y_hat_mel) * config.train.c_mel
             loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * config.train.c_kl
             loss_fm = feature_loss(fmap_r, fmap_g)
+            loss_fm_mrd = feature_loss(fmap_r_mrd, fmap_g_mrd)
             loss_gen, _ = generator_loss(y_d_hat_g)
-            loss_gen_all = loss_gen + loss_fm + loss_mel + loss_kl
+            loss_gen_mrd, _ = generator_loss(y_d_hat_g_mrd)
+            loss_gen_all = loss_gen + loss_gen_mrd + loss_fm + loss_fm_mrd + loss_mel + loss_kl
 
             if loss_gen_all < lowest_value["value"]:
                 lowest_value = {
