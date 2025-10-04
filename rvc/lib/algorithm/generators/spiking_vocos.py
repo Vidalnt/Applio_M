@@ -434,7 +434,7 @@ class SpikingVocosRVCGenerator(nn.Module):
         self.out_conv = nn.Conv1d(snn_dim, out_channels, 1)
         
         # ISTFT parameters
-        self.istft = torch.nn.functional.istft
+        self.istft = torch.istft
         self.window = torch.hann_window(n_fft)
 
     def forward(self, x: torch.Tensor, f0: Optional[torch.Tensor] = None, g: Optional[torch.Tensor] = None) -> torch.Tensor:
