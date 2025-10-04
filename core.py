@@ -551,7 +551,7 @@ def run_train_script(
         ),
     ]
     subprocess.run(command)
-    run_index_script(model_name, index_algorithm)
+    #run_index_script(model_name, index_algorithm)
     return f"Model {model_name} trained successfully."
 
 
