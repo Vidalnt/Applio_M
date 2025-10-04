@@ -364,7 +364,7 @@ if __name__ == "__main__":
     chunk_len = float(sys.argv[9])
     overlap_len = float(sys.argv[10])
     normalization_mode = str(sys.argv[11])
-    max_speakers = "10"
+    max_speakers = 10
     preprocess_training_set(
         input_root,
         sample_rate,
