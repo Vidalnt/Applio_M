@@ -449,16 +449,18 @@ class SpikingVocosRVCGenerator(nn.Module):
 
         if f0 is not None:
             # Generate harmonic source
-            T_target = x.size(2) # T_in
-            if f0.size(1) != T_target:
+            T_backbone_target = x.size(1)
+            T_f0_current = f0.size(1)
+
+            if T_f0_current != T_backbone_target:
                 f0_aligned = F.interpolate(
-                    f0.unsqueeze(1), # [B, T_f0] -> [B, 1, T_f0]
-                    size=T_target,
+                    f0.unsqueeze(1), # [B, T_f0_current] -> [B, 1, T_f0_current]
+                    size=T_backbone_target,
                     mode='linear',
                     align_corners=False
-                ).squeeze(1) # [B, 1, T_target] -> [B, T_target]
+                ).squeeze(1) # [B, 1, T_backbone_target] -> [B, T_backbone_target]
             else:
-                f0_aligned = f0 # [B, T_target]
+                f0_aligned = f0 # [B, T_backbone_target]
             # f0 [B, T_in] -> [B, T_in, 1] for m_source
             har_source, _, _ = self.m_source(f0_aligned.unsqueeze(-1)) # f0 [B, T_in, 1] -> [B, T_in, 1] (output of m_source)
             # Transpose har_source from [B, T_in, 1] -> [B, 1, T_in] for conv_pre_y
