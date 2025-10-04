@@ -10,7 +10,142 @@ import numpy as np
 #pip install spikingjelly
 from spikingjelly.activation_based.neuron import ParametricLIFNode
 from spikingjelly.activation_based import functional
-from rvc.lib.algorithm.generators.hifigan_nsf import SourceModuleHnNSF
+
+class SineGenerator(torch.nn.Module):
+    """
+    Definition of sine generator
+
+    Generates sine waveforms with optional harmonics and additive noise.
+    Can be used to create harmonic noise source for neural vocoders.
+
+    Args:
+        samp_rate (int): Sampling rate in Hz.
+        harmonic_num (int): Number of harmonic overtones (default 0).
+        sine_amp (float): Amplitude of sine-waveform (default 0.1).
+        noise_std (float): Standard deviation of Gaussian noise (default 0.003).
+        voiced_threshold (float): F0 threshold for voiced/unvoiced classification (default 0).
+    """
+
+    def __init__(
+        self,
+        samp_rate: int,
+        harmonic_num: int = 0,
+        sine_amp: float = 0.1,
+        noise_std: float = 0.003,
+        voiced_threshold: float = 0,
+    ):
+        super(SineGenerator, self).__init__()
+        self.sine_amp = sine_amp
+        self.noise_std = noise_std
+        self.harmonic_num = harmonic_num
+        self.dim = self.harmonic_num + 1
+        self.sampling_rate = samp_rate
+        self.voiced_threshold = voiced_threshold
+
+    def _f02uv(self, f0: torch.Tensor):
+        """
+        Generates voiced/unvoiced (UV) signal based on the fundamental frequency (F0).
+
+        Args:
+            f0 (torch.Tensor): Fundamental frequency tensor of shape (batch_size, length, 1).
+        """
+        # generate uv signal
+        uv = torch.ones_like(f0)
+        uv = uv * (f0 > self.voiced_threshold)
+        return uv
+
+    def _f02sine(self, f0_values: torch.Tensor):
+        """
+        Generates sine waveforms based on the fundamental frequency (F0) and its harmonics.
+
+        Args:
+            f0_values (torch.Tensor): Tensor of fundamental frequency and its harmonics,
+                                      shape (batch_size, length, dim), where dim indicates
+                                      the fundamental tone and overtones.
+        """
+        # convert to F0 in rad. The integer part n can be ignored
+        # because 2 * np.pi * n doesn't affect phase
+        rad_values = (f0_values / self.sampling_rate) % 1
+
+        # initial phase noise (no noise for fundamental component)
+        rand_ini = torch.rand(
+            f0_values.shape[0], f0_values.shape[2], device=f0_values.device
+        )
+        rand_ini[:, 0] = 0
+        rad_values[:, 0, :] = rad_values[:, 0, :] + rand_ini
+
+        # instantanouse phase sine[t] = sin(2*pi \sum_i=1 ^{t} rad)
+        tmp_over_one = torch.cumsum(rad_values, 1) % 1
+        tmp_over_one_idx = (tmp_over_one[:, 1:, :] - tmp_over_one[:, :-1, :]) < 0
+        cumsum_shift = torch.zeros_like(rad_values)
+        cumsum_shift[:, 1:, :] = tmp_over_one_idx * -1.0
+
+        sines = torch.sin(torch.cumsum(rad_values + cumsum_shift, dim=1) * 2 * np.pi)
+
+        return sines
+
+    def forward(self, f0: torch.Tensor):
+        with torch.no_grad():
+            f0_buf = torch.zeros(f0.shape[0], f0.shape[1], self.dim, device=f0.device)
+            # fundamental component
+            f0_buf[:, :, 0] = f0[:, :, 0]
+            for idx in np.arange(self.harmonic_num):
+                f0_buf[:, :, idx + 1] = f0_buf[:, :, 0] * (idx + 2)
+
+            sine_waves = self._f02sine(f0_buf) * self.sine_amp
+
+            uv = self._f02uv(f0)
+
+            noise_amp = uv * self.noise_std + (1 - uv) * self.sine_amp / 3
+            noise = noise_amp * torch.randn_like(sine_waves)
+
+            sine_waves = sine_waves * uv + noise
+        return sine_waves, uv, noise
+
+
+class SourceModuleHnNSF(torch.nn.Module):
+    """
+    Generates harmonic and noise source features.
+
+    This module uses the SineGenerator to create harmonic signals based on the
+    fundamental frequency (F0) and merges them into a single excitation signal.
+
+    Args:
+        sample_rate (int): Sampling rate in Hz.
+        harmonic_num (int, optional): Number of harmonics above F0. Defaults to 0.
+        sine_amp (float, optional): Amplitude of sine source signal. Defaults to 0.1.
+        add_noise_std (float, optional): Standard deviation of additive Gaussian noise. Defaults to 0.003.
+        voiced_threshod (float, optional): Threshold to set voiced/unvoiced given F0. Defaults to 0.
+    """
+
+    def __init__(
+        self,
+        sampling_rate: int,
+        harmonic_num: int = 0,
+        sine_amp: float = 0.1,
+        add_noise_std: float = 0.003,
+        voiced_threshold: float = 0,
+    ):
+        super(SourceModuleHnNSF, self).__init__()
+
+        self.sine_amp = sine_amp
+        self.noise_std = add_noise_std
+
+        # to produce sine waveforms
+        self.l_sin_gen = SineGenerator(
+            sampling_rate, harmonic_num, sine_amp, add_noise_std, voiced_threshold
+        )
+
+        # to merge source harmonics into a single excitation
+        self.l_linear = torch.nn.Linear(harmonic_num + 1, 1)
+        self.l_tanh = torch.nn.Tanh()
+
+    def forward(self, x: torch.Tensor):
+        sine_wavs, uv, _ = self.l_sin_gen(x)
+        sine_wavs = sine_wavs.to(dtype=self.l_linear.weight.dtype)
+        sine_merge = self.l_tanh(self.l_linear(sine_wavs))
+
+        return sine_merge, None, None
 
 class TemporalShift(nn.Module):
     """
@@ -304,6 +439,7 @@ class SpikingVocosRVCGenerator(nn.Module):
 
     def forward(self, x: torch.Tensor, f0: Optional[torch.Tensor] = None, g: Optional[torch.Tensor] = None) -> torch.Tensor:
         # x: [B, initial_channel, T_in] where T_in corresponds to time steps of features
+        # f0: [B, T_in] fundamental frequency
         # g: [B, gin_channels, 1] global conditioning (speaker embedding)
         
         # Forward through SpikingVocosBackbone
@@ -312,20 +448,21 @@ class SpikingVocosRVCGenerator(nn.Module):
 
         if f0 is not None:
             # Generate harmonic source
-            har_source, _, _ = self.m_source(f0.unsqueeze(1), self.n_fft // self.hop_length) # f0 [B, T_in] -> [B, 1, T_in], ups_factor
+            # f0 [B, T_in] -> [B, T_in, 1] for m_source
+            har_source, _, _ = self.m_source(f0.unsqueeze(-1)) # f0 [B, T_in, 1] -> [B, T_in, 1] (output of m_source)
+            # Transpose har_source from [B, T_in, 1] -> [B, 1, T_in] for conv_pre_y
             har_source = har_source.transpose(1, 2) # [B, T_in, 1] -> [B, 1, T_in]
             har_source = self.conv_pre_y(har_source) # [B, 1, T_in] -> [B, snn_dim//2, T_in]
             
             # Concatenate backbone output and harmonic source
             # x is [B, L, snn_dim], har_source is [B, snn_dim//2, T_in]
-            # Transpose x to [B, snn_dim, L] for concatenation
+            # Transpose x to [B, snn_dim, L] for concatenation (assuming L == T_in)
             x_backbone = x.transpose(1, 2) # [B, L, snn_dim] -> [B, snn_dim, T_in]
             x_concat = torch.cat([x_backbone, har_source], dim=1) # [B, snn_dim + snn_dim//2, T_in]
             
             # Fuse concatenated features
             x = self.fuse_y_mel(x_concat) # [B, snn_dim + snn_dim//2, T_in] -> [B, snn_dim, T_in]
-            # Transpose back to [B, T_in, snn_dim] for out_conv (or keep as [B, snn_dim, T_in] and out_conv works)
-            # The out_conv expects [B, snn_dim, L], so x should be [B, snn_dim, T_in] here, which it is after fuse_y_mel.
+            # x is now [B, snn_dim, T_in], ready for out_conv
         
         # If f0 was not provided, x remains [B, L, snn_dim] from backbone, transpose to [B, snn_dim, L]
         else:
