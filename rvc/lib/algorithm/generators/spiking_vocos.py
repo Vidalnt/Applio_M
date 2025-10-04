@@ -446,6 +446,7 @@ class SpikingVocosRVCGenerator(nn.Module):
         # Forward through SpikingVocosBackbone
         # Output shape: [B, L, dim] where L is the sequence length (same as input T_in)
         x = self.backbone(x, g=g) # [B, L, dim]
+        f0 = None
 
         if f0 is not None:
             # Generate harmonic source
