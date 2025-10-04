@@ -280,7 +280,7 @@ def preprocess_training_set(
     chunk_len: float,
     overlap_len: float,
     normalization_mode: str,
-    max_speakers: int,
+    max_files_per_speaker: int,
 ):
     start_time = time.time()
     pp = PreProcess(sr, exp_dir)
@@ -288,24 +288,23 @@ def preprocess_training_set(
 
     files = []
     idx = 0
-    speaker_ids = set()
+    speaker_file_count = {}
 
     for root, _, filenames in os.walk(input_root):
         try:
             sid = 0 if root == input_root else int(os.path.basename(root))
             
-            if sid in speaker_ids or (sid == 0 and root == input_root):
-                pass
-            elif len(speaker_ids) >= max_speakers:
-                print(f"Speaker limit reached ({max_speakers}). Skipping speaker ID {sid}.")
-                continue
-            else:
-                speaker_ids.add(sid)
+            if sid not in speaker_file_count:
+                speaker_file_count[sid] = 0
             
             for f in filenames:
                 if f.lower().endswith((".wav", ".mp3", ".flac", ".ogg")):
-                    files.append((os.path.join(root, f), idx, sid))
-                    idx += 1
+                    if speaker_file_count[sid] < max_files_per_speaker:
+                        files.append((os.path.join(root, f), idx, sid))
+                        speaker_file_count[sid] += 1
+                        idx += 1
+                    else:
+                        print(f"Speaker {sid} reached file limit ({max_files_per_speaker}). Skipping file: {f}")
         except ValueError:
             print(
                 f'Speaker ID folder is expected to be integer, got "{os.path.basename(root)}" instead.'
@@ -364,7 +363,7 @@ if __name__ == "__main__":
     chunk_len = float(sys.argv[9])
     overlap_len = float(sys.argv[10])
     normalization_mode = str(sys.argv[11])
-    max_speakers = 10
+    max_files_per_speaker = 10
     preprocess_training_set(
         input_root,
         sample_rate,
@@ -377,5 +376,5 @@ if __name__ == "__main__":
         chunk_len,
         overlap_len,
         normalization_mode,
-        max_speakers,
+        max_files_per_speaker,
     )
