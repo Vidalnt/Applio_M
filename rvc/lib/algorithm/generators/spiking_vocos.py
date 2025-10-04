@@ -449,20 +449,8 @@ class SpikingVocosRVCGenerator(nn.Module):
 
         if f0 is not None:
             # Generate harmonic source
-            T_backbone_target = x.size(1)
-            T_f0_current = f0.size(1)
-
-            if T_f0_current != T_backbone_target:
-                f0_aligned = F.interpolate(
-                    f0.unsqueeze(1), # [B, T_f0_current] -> [B, 1, T_f0_current]
-                    size=T_backbone_target,
-                    mode='linear',
-                    align_corners=False
-                ).squeeze(1) # [B, 1, T_backbone_target] -> [B, T_backbone_target]
-            else:
-                f0_aligned = f0 # [B, T_backbone_target]
             # f0 [B, T_in] -> [B, T_in, 1] for m_source
-            har_source, _, _ = self.m_source(f0_aligned.unsqueeze(-1)) # f0 [B, T_in, 1] -> [B, T_in, 1] (output of m_source)
+            har_source, _, _ = self.m_source(f0.unsqueeze(-1)) # f0 [B, T_in, 1] -> [B, T_in, 1] (output of m_source)
             # Transpose har_source from [B, T_in, 1] -> [B, 1, T_in] for conv_pre_y
             har_source = har_source.transpose(1, 2) # [B, T_in, 1] -> [B, 1, T_in]
             har_source = self.conv_pre_y(har_source) # [B, 1, T_in] -> [B, snn_dim//2, T_in]
@@ -503,7 +491,7 @@ class SpikingVocosRVCGenerator(nn.Module):
             hop_length=self.hop_length,
             win_length=self.n_fft,
             window=self.window.to(S.device),
-            center=True # Assumes Vocos-style padding was handled upstream
+            center=False
         )
         
         # Add channel dimension for RVC: [B, 1, T_audio]
