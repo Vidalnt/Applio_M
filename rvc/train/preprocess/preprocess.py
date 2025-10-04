@@ -280,6 +280,7 @@ def preprocess_training_set(
     chunk_len: float,
     overlap_len: float,
     normalization_mode: str,
+    max_speakers: int,
 ):
     start_time = time.time()
     pp = PreProcess(sr, exp_dir)
@@ -287,10 +288,20 @@ def preprocess_training_set(
 
     files = []
     idx = 0
+    speaker_ids = set()
 
     for root, _, filenames in os.walk(input_root):
         try:
             sid = 0 if root == input_root else int(os.path.basename(root))
+            
+            if sid in speaker_ids or (sid == 0 and root == input_root):
+                pass
+            elif len(speaker_ids) >= max_speakers:
+                print(f"Speaker limit reached ({max_speakers}). Skipping speaker ID {sid}.")
+                continue
+            else:
+                speaker_ids.add(sid)
+            
             for f in filenames:
                 if f.lower().endswith((".wav", ".mp3", ".flac", ".ogg")):
                     files.append((os.path.join(root, f), idx, sid))
@@ -353,6 +364,7 @@ if __name__ == "__main__":
     chunk_len = float(sys.argv[9])
     overlap_len = float(sys.argv[10])
     normalization_mode = str(sys.argv[11])
+    max_speakers = "10"
     preprocess_training_set(
         input_root,
         sample_rate,
@@ -365,4 +377,5 @@ if __name__ == "__main__":
         chunk_len,
         overlap_len,
         normalization_mode,
+        max_speakers,
     )
