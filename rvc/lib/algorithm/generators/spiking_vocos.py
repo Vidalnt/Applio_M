@@ -399,16 +399,18 @@ class SpikingVocosRVCGenerator(nn.Module):
         snn_intermediate_dim: int = 1536, # Intermediate dimension for SNN blocks
         snn_num_layers: int = 8, # Number of SNN blocks
         sample_rate: int = 40000, # Sample rate for ISTFT
-        out_channels: int = 1602, # Output channels for ISTFT (n_fft + 2)
+        out_channels: int = 2050, # Output channels for ISTFT (n_fft + 2)
         channel_folding_factor: int = 32,
         tsm_penalty_factor: float = 0.5,
+        # ISTFT parameters
+        n_fft: int = 2048,
+        hop_length: int = 400,
     ):
         super().__init__()
         
         self.snn_timestep = snn_timestep
-        self.hop_length = sample_rate // 100
-        self.n_fft = 4 * self.hop_length
-
+        self.hop_length = hop_length
+        self.n_fft = n_fft
         
         # Use SpikingVocosBackbone with gin_channels support
         self.backbone = SpikingVocosBackbone(
@@ -434,7 +436,7 @@ class SpikingVocosRVCGenerator(nn.Module):
         
         # ISTFT parameters
         self.istft = torch.istft
-        self.window = torch.hann_window(self.n_fft)
+        self.window = torch.hann_window(n_fft)
 
     def forward(self, x: torch.Tensor, f0: Optional[torch.Tensor] = None, g: Optional[torch.Tensor] = None) -> torch.Tensor:
         # x: [B, initial_channel, T_in] where T_in corresponds to time steps of features
