@@ -491,7 +491,7 @@ class SpikingVocosRVCGenerator(nn.Module):
             hop_length=self.hop_length,
             win_length=self.n_fft,
             window=self.window.to(S.device),
-            center=False
+            center=True
         )
         
         # Add channel dimension for RVC: [B, 1, T_audio]
