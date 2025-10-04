@@ -485,10 +485,10 @@ def run(
     try:
         print("Starting training...")
         _, _, _, epoch_str, scaler_dict = load_checkpoint(
-            latest_checkpoint_path(experiment_dir, "D_*.pth"), net_d, optim_d
+            latest_checkpoint_path(experiment_dir, "D_*.pth"), net_d, optim_d, load_opt=1
         )
-        _, _, _, epoch_str, scaler_dict = load_checkpoint(
-            latest_checkpoint_path(experiment_dir, "E_*.pth"), net_d_mrd, optim_d
+        _, _, _, _, _ = load_checkpoint(
+            latest_checkpoint_path(experiment_dir, "E_*.pth"), net_d_mrd, optim_d, load_opt=0
         )
         _, _, _, epoch_str, _ = load_checkpoint(
             latest_checkpoint_path(experiment_dir, "G_*.pth"), net_g, optim_g
@@ -1054,6 +1054,14 @@ def train_and_evaluate(
                 config.train.learning_rate,
                 epoch,
                 os.path.join(experiment_dir, "D_" + checkpoint_suffix),
+                scaler,
+            )
+            save_checkpoint(
+                net_d_mrd,
+                optim_d,
+                config.train.learning_rate,
+                epoch,
+                os.path.join(experiment_dir, "E_" + checkpoint_suffix),
                 scaler,
             )
             if custom_save_every_weights:
