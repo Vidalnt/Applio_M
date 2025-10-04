@@ -402,15 +402,13 @@ class SpikingVocosRVCGenerator(nn.Module):
         out_channels: int = 2050, # Output channels for ISTFT (n_fft + 2)
         channel_folding_factor: int = 32,
         tsm_penalty_factor: float = 0.5,
-        # ISTFT parameters
-        n_fft: int = 2048,
-        hop_length: int = 400,
     ):
         super().__init__()
         
         self.snn_timestep = snn_timestep
-        self.hop_length = hop_length
-        self.n_fft = n_fft
+        self.hop_length = sample_rate // 100
+        self.n_fft = 4 * self.hop_length
+
         
         # Use SpikingVocosBackbone with gin_channels support
         self.backbone = SpikingVocosBackbone(
