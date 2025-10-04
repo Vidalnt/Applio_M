@@ -280,7 +280,6 @@ def preprocess_training_set(
     chunk_len: float,
     overlap_len: float,
     normalization_mode: str,
-    max_files_per_speaker: int,
 ):
     start_time = time.time()
     pp = PreProcess(sr, exp_dir)
@@ -288,23 +287,14 @@ def preprocess_training_set(
 
     files = []
     idx = 0
-    speaker_file_count = {}
 
     for root, _, filenames in os.walk(input_root):
         try:
             sid = 0 if root == input_root else int(os.path.basename(root))
-            
-            if sid not in speaker_file_count:
-                speaker_file_count[sid] = 0
-            
             for f in filenames:
                 if f.lower().endswith((".wav", ".mp3", ".flac", ".ogg")):
-                    if speaker_file_count[sid] < max_files_per_speaker:
-                        files.append((os.path.join(root, f), idx, sid))
-                        speaker_file_count[sid] += 1
-                        idx += 1
-                    else:
-                        print(f"Speaker {sid} reached file limit ({max_files_per_speaker}). Skipping file: {f}")
+                    files.append((os.path.join(root, f), idx, sid))
+                    idx += 1
         except ValueError:
             print(
                 f'Speaker ID folder is expected to be integer, got "{os.path.basename(root)}" instead.'
@@ -363,7 +353,6 @@ if __name__ == "__main__":
     chunk_len = float(sys.argv[9])
     overlap_len = float(sys.argv[10])
     normalization_mode = str(sys.argv[11])
-    max_files_per_speaker = 10
     preprocess_training_set(
         input_root,
         sample_rate,
@@ -376,5 +365,4 @@ if __name__ == "__main__":
         chunk_len,
         overlap_len,
         normalization_mode,
-        max_files_per_speaker,
     )
