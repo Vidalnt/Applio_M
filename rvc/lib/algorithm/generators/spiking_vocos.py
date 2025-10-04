@@ -361,13 +361,14 @@ class SpikingVocosBackbone(nn.Module):
         # Reset SNN states before processing a new batch
         functional.reset_net(self.convnext)
         
-        # Apply conditioning if provided
-        if g is not None:
-            c = self.cond(g) # [B, dim, L]
-            x = x + c # Add conditioning before SNN processing
-        
         # Input embedding
         x = self.embed(x) # [B, dim, L]
+
+        # Apply conditioning if provided
+        if g is not None:
+            c = self.cond(g)  # [B, dim, 1] (assuming gin_channels -> dim)
+            c = c.expand(-1, -1, x.size(2))  # [B, dim, L] to match x shape
+            x = x + c  # Sum conditioning: [B, dim, L] + [B, dim, L] - BILINEAR
         
         # Expand time dimension for SNN simulation
         potential = x.unsqueeze(0).repeat(self.snn_timestep, 1, 1, 1) # [T, B, dim, L]
