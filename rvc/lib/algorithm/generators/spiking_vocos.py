@@ -399,7 +399,7 @@ class SpikingVocosRVCGenerator(nn.Module):
         snn_intermediate_dim: int = 1536, # Intermediate dimension for SNN blocks
         snn_num_layers: int = 8, # Number of SNN blocks
         sample_rate: int = 40000, # Sample rate for ISTFT
-        out_channels: int = 2050, # Output channels for ISTFT (n_fft + 2)
+        out_channels: int = 1602, # Output channels for ISTFT (n_fft + 2)
         channel_folding_factor: int = 32,
         tsm_penalty_factor: float = 0.5,
     ):
