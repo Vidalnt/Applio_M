@@ -412,8 +412,6 @@ class SpikingVocosRVCGenerator(nn.Module):
         self.hop_length = hop_length
         self.n_fft = n_fft
 
-        self.pad = nn.ReflectionPad1d([1, 0])
-        
         # Use SpikingVocosBackbone with gin_channels support
         self.backbone = SpikingVocosBackbone(
             input_channels=initial_channel,
@@ -445,16 +443,24 @@ class SpikingVocosRVCGenerator(nn.Module):
         # f0: [B, T_in] fundamental frequency
         # g: [B, gin_channels, 1] global conditioning (speaker embedding)
 
-        x = self.pad(x) # [B, initial_channel, T_in_original] -> [B, initial_channel, T_in_padded]
-        
         # Forward through SpikingVocosBackbone
         # Output shape: [B, L, dim] where L is the sequence length (same as input T_in)
         x = self.backbone(x, g=g) # [B, L, dim]
 
         if f0 is not None:
             # Generate harmonic source
+            T_target = x.size(2) # T_in
+            if f0.size(1) != T_target:
+                f0_aligned = F.interpolate(
+                    f0.unsqueeze(1), # [B, T_f0] -> [B, 1, T_f0]
+                    size=T_target,
+                    mode='linear',
+                    align_corners=False
+                ).squeeze(1) # [B, 1, T_target] -> [B, T_target]
+            else:
+                f0_aligned = f0 # [B, T_target]
             # f0 [B, T_in] -> [B, T_in, 1] for m_source
-            har_source, _, _ = self.m_source(f0.unsqueeze(-1)) # f0 [B, T_in, 1] -> [B, T_in, 1] (output of m_source)
+            har_source, _, _ = self.m_source(f0_aligned.unsqueeze(-1)) # f0 [B, T_in, 1] -> [B, T_in, 1] (output of m_source)
             # Transpose har_source from [B, T_in, 1] -> [B, 1, T_in] for conv_pre_y
             har_source = har_source.transpose(1, 2) # [B, T_in, 1] -> [B, 1, T_in]
             har_source = self.conv_pre_y(har_source) # [B, 1, T_in] -> [B, snn_dim//2, T_in]
