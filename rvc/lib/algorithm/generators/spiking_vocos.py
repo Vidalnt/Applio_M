@@ -412,6 +412,8 @@ class SpikingVocosRVCGenerator(nn.Module):
         self.hop_length = hop_length
         self.n_fft = n_fft
 
+        self.pad = nn.ReflectionPad1d([1, 0])
+
         # Use SpikingVocosBackbone with gin_channels support
         self.backbone = SpikingVocosBackbone(
             input_channels=initial_channel,
@@ -468,6 +470,8 @@ class SpikingVocosRVCGenerator(nn.Module):
         # If f0 was not provided, x remains [B, L, snn_dim] from backbone, transpose to [B, snn_dim, L]
         else:
             x = x.transpose(1, 2) # [B, L, snn_dim] -> [B, snn_dim, L]
+
+        x = self.pad(x)
         
         # Predict spectral coefficients: [B, out_channels, L]
         x = self.out_conv(x)
