@@ -343,10 +343,10 @@ def train_tab():
                     info=i18n(
                         "Choose the vocoder for audio synthesis:\n- **HiFi-GAN**: Default option, compatible with all clients.\n- **MRF HiFi-GAN**: Higher fidelity, Applio-only.\n- **RefineGAN**: Superior audio quality, Applio-only."
                     ),
-                    choices=["HiFi-GAN", "MRF HiFi-GAN", "RefineGAN"],
+                    choices=["HiFi-GAN", "MRF HiFi-GAN", "RefineGAN", "SpikingVocos"],
                     value="HiFi-GAN",
                     interactive=False,
-                    visible=False,  # to be visible once pretraineds are ready
+                    visible=True,  # to be visible once pretraineds are ready
                 )
         with gr.Accordion(
             i18n("Advanced Settings"),
