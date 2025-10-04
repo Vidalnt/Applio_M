@@ -104,6 +104,17 @@ class Synthesizer(torch.nn.Module):
                     num_mels=inter_channels,
                     checkpointing=checkpointing,
                 )
+            elif vocoder == "SpikingVocos":
+                self.dec = SpikingVocosRVCGenerator(
+                    initial_channel=inter_channels,
+                    gin_channels=gin_channels,
+                    snn_timestep=4,
+                    snn_dim=upsample_initial_channel,
+                    snn_intermediate_dim=1536,
+                    snn_num_layers=8,
+                    sample_rate=sr,
+                    #out_channels=spec_channels * 2,
+                )
             else:
                 self.dec = HiFiGANNSFGenerator(
                     inter_channels,
