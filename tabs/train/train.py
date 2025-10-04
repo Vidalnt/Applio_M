@@ -345,7 +345,7 @@ def train_tab():
                     ),
                     choices=["HiFi-GAN", "MRF HiFi-GAN", "RefineGAN", "SpikingVocos"],
                     value="HiFi-GAN",
-                    interactive=False,
+                    interactive=True,
                     visible=True,  # to be visible once pretraineds are ready
                 )
         with gr.Accordion(
