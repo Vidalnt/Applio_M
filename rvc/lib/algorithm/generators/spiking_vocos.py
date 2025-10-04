@@ -10,7 +10,7 @@ import numpy as np
 #pip install spikingjelly
 from spikingjelly.activation_based.neuron import ParametricLIFNode
 from spikingjelly.activation_based import functional
-
+from rvc.lib.algorithm.generators.hifigan_nsf import SourceModuleHnNSF
 
 class TemporalShift(nn.Module):
     """
@@ -287,6 +287,13 @@ class SpikingVocosRVCGenerator(nn.Module):
             channel_folding_factor=channel_folding_factor,
             tsm_penalty_factor=tsm_penalty_factor,
         )
+
+        self.m_source = SourceModuleHnNSF(sample_rate, harmonic_num=0)
+
+        # Conv layer to process the harmonic source before concatenation
+        self.conv_pre_y = weight_norm(nn.Conv1d(1, snn_dim // 2, kernel_size=7, padding=3))
+        # Conv layer to fuse the backbone output (snn_dim) and processed harmonic source (snn_dim//2) -> snn_dim
+        self.fuse_y_mel = weight_norm(nn.Conv1d(snn_dim + snn_dim // 2, snn_dim, kernel_size=1))
         
         # Output layer to predict magnitude and phase
         self.out_conv = nn.Conv1d(snn_dim, out_channels, 1)
@@ -295,16 +302,34 @@ class SpikingVocosRVCGenerator(nn.Module):
         self.istft = torch.nn.functional.istft
         self.window = torch.hann_window(n_fft)
 
-    def forward(self, x: torch.Tensor, g: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, f0: Optional[torch.Tensor] = None, g: Optional[torch.Tensor] = None) -> torch.Tensor:
         # x: [B, initial_channel, T_in] where T_in corresponds to time steps of features
         # g: [B, gin_channels, 1] global conditioning (speaker embedding)
         
         # Forward through SpikingVocosBackbone
         # Output shape: [B, L, dim] where L is the sequence length (same as input T_in)
         x = self.backbone(x, g=g) # [B, L, dim]
+
+        if f0 is not None:
+            # Generate harmonic source
+            har_source, _, _ = self.m_source(f0.unsqueeze(1), self.n_fft // self.hop_length) # f0 [B, T_in] -> [B, 1, T_in], ups_factor
+            har_source = har_source.transpose(1, 2) # [B, T_in, 1] -> [B, 1, T_in]
+            har_source = self.conv_pre_y(har_source) # [B, 1, T_in] -> [B, snn_dim//2, T_in]
+            
+            # Concatenate backbone output and harmonic source
+            # x is [B, L, snn_dim], har_source is [B, snn_dim//2, T_in]
+            # Transpose x to [B, snn_dim, L] for concatenation
+            x_backbone = x.transpose(1, 2) # [B, L, snn_dim] -> [B, snn_dim, T_in]
+            x_concat = torch.cat([x_backbone, har_source], dim=1) # [B, snn_dim + snn_dim//2, T_in]
+            
+            # Fuse concatenated features
+            x = self.fuse_y_mel(x_concat) # [B, snn_dim + snn_dim//2, T_in] -> [B, snn_dim, T_in]
+            # Transpose back to [B, T_in, snn_dim] for out_conv (or keep as [B, snn_dim, T_in] and out_conv works)
+            # The out_conv expects [B, snn_dim, L], so x should be [B, snn_dim, T_in] here, which it is after fuse_y_mel.
         
-        # Transpose for output conv: [B, L, dim] -> [B, dim, L]
-        x = x.transpose(1, 2)
+        # If f0 was not provided, x remains [B, L, snn_dim] from backbone, transpose to [B, snn_dim, L]
+        else:
+            x = x.transpose(1, 2) # [B, L, snn_dim] -> [B, snn_dim, L]
         
         # Predict spectral coefficients: [B, out_channels, L]
         x = self.out_conv(x)
