@@ -70,7 +70,7 @@ d_step_per_g_step = 1
 multiscale_mel_loss = False
 bf16_adamw = False
 
-current_dir = os.getcwd()
+current_dir = "/kaggle/working" #os.getcwd()
 
 try:
     with open(os.path.join(current_dir, "assets", "config.json"), "r") as f:
