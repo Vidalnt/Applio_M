@@ -15,7 +15,7 @@ from rvc.realtime.utils.torch import circular_write
 from rvc.configs.config import Config
 from rvc.infer.pipeline import Autotune, AudioProcessor
 from rvc.lib.algorithm.synthesizers import Synthesizer
-from rvc.lib.predictors.f0 import FCPE, RMVPE, SWIFT
+from rvc.lib.predictors.f0 import FCPE, RMVPE
 from rvc.lib.utils import load_embedding, HubertModelWithFinalProj
 
 
@@ -153,21 +153,6 @@ class Realtime_Pipeline:
                     hop_size=self.window,
                 )
             f0 = self.f0_model.get_f0(x, x.shape[0] // self.window, filter_radius=0.006)
-        elif self.f0_method == "swift":
-            if self.f0_model is None:
-                self.f0_model = SWIFT(
-                    device=self.device,
-                    sample_rate=self.sample_rate,
-                    hop_size=self.window,
-                )
-            f0 = self.f0_model.get_f0(
-                x,
-                self.f0_min,
-                self.f0_max,
-                x.shape[0] // self.window,
-                confidence_threshold=0.887,
-            )
-
         # f0 adjustments
         if f0_autotune is True:
             f0 = self.autotune.autotune_f0(f0, f0_autotune_strength)
@@ -243,92 +228,108 @@ class Realtime_Pipeline:
         f0_autotune_strength: float = 1,
         proposed_pitch: bool = False,
         proposed_pitch_threshold: float = 155.0,
+        reduced_noise=None,
+        board=None,
     ):
         """
         Performs realtime voice conversion on a given audio segment.
         """
-        assert audio.dim() == 1, audio.dim()
-        feats = audio.view(1, -1).to(self.device)
+        with torch.no_grad():
+            assert audio.dim() == 1, audio.dim()
+            feats = audio.view(1, -1).to(self.device)
 
-        formant_length = int(np.ceil(return_length * 1.0))
+            formant_length = int(np.ceil(return_length * 1.0))
 
-        pitch, pitchf = (
-            self.get_f0(
-                audio[silence_front:],
-                pitch,
-                pitchf,
-                f0_up_key,
-                f0_autotune,
-                f0_autotune_strength,
-                proposed_pitch,
-                proposed_pitch_threshold,
+            pitch, pitchf = (
+                self.get_f0(
+                    audio[silence_front:],
+                    pitch,
+                    pitchf,
+                    f0_up_key,
+                    f0_autotune,
+                    f0_autotune_strength,
+                    proposed_pitch,
+                    proposed_pitch_threshold,
+                )
+                if self.use_f0
+                else (None, None)
             )
-            if self.use_f0
-            else (None, None)
-        )
 
-        # extract features
-        feats = self.hubert_model(feats)["last_hidden_state"]
-        feats = (
-            self.hubert_model.final_proj(feats[0]).unsqueeze(0)
-            if self.version == "v1"
-            else feats
-        )
-
-        feats = torch.cat((feats, feats[:, -1:, :]), 1)
-        # make a copy for pitch guidance and protection
-        feats0 = feats.detach().clone() if self.use_f0 else None
-
-        if (
-            self.index
-        ):  # set by parent function, only true if index is available, loaded, and index rate > 0
-            feats = self._retrieve_speaker_embeddings(
-                skip_head, feats, self.index, self.big_npy, index_rate
+            # extract features
+            feats = self.hubert_model(feats)["last_hidden_state"]
+            feats = (
+                self.hubert_model.final_proj(feats[0]).unsqueeze(0)
+                if self.version == "v1"
+                else feats
             )
-        # feature upsampling
-        feats = F.interpolate(feats.permute(0, 2, 1), scale_factor=2).permute(0, 2, 1)[
-            :, :p_len, :
-        ]
 
-        if self.use_f0:
-            feats0 = F.interpolate(feats0.permute(0, 2, 1), scale_factor=2).permute(
+            feats = torch.cat((feats, feats[:, -1:, :]), 1)
+            # make a copy for pitch guidance and protection
+            feats0 = feats.detach().clone() if self.use_f0 else None
+
+            if (
+                self.index
+            ):  # set by parent function, only true if index is available, loaded, and index rate > 0
+                feats = self._retrieve_speaker_embeddings(
+                    skip_head, feats, self.index, self.big_npy, index_rate
+                )
+            # feature upsampling
+            feats = F.interpolate(feats.permute(0, 2, 1), scale_factor=2).permute(
                 0, 2, 1
             )[:, :p_len, :]
-            pitch, pitchf = pitch[:, -p_len:], pitchf[:, -p_len:] * (
-                formant_length / return_length
-            )
 
-            # Pitch protection blending
-            if protect < 0.5:
-                pitchff = pitchf.detach().clone()
-                pitchff[pitchf > 0] = 1
-                pitchff[pitchf < 1] = protect
-                feats = feats * pitchff.unsqueeze(-1) + feats0 * (
-                    1 - pitchff.unsqueeze(-1)
+            if self.use_f0:
+                feats0 = F.interpolate(feats0.permute(0, 2, 1), scale_factor=2).permute(
+                    0, 2, 1
+                )[:, :p_len, :]
+                pitch, pitchf = pitch[:, -p_len:], pitchf[:, -p_len:] * (
+                    formant_length / return_length
                 )
-                feats = feats.to(feats0.dtype)
-        else:
-            pitch, pitchf = None, None
 
-        p_len = torch.tensor([p_len], device=self.device, dtype=torch.int64)
-        out_audio = self.vc.inference(feats, p_len, self.sid, pitch, pitchf).float()
-        if volume_envelope != 1:
-            out_audio = AudioProcessor.change_rms(
-                audio, self.sample_rate, out_audio, self.tgt_sr, volume_envelope
-            )
+                # Pitch protection blending
+                if protect < 0.5:
+                    pitchff = pitchf.detach().clone()
+                    pitchff[pitchf > 0] = 1
+                    pitchff[pitchf < 1] = protect
+                    feats = feats * pitchff.unsqueeze(-1) + feats0 * (
+                        1 - pitchff.unsqueeze(-1)
+                    )
+                    feats = feats.to(feats0.dtype)
+            else:
+                pitch, pitchf = None, None
 
-        scaled_window = int(np.floor(1.0 * self.model_window))
+            p_len = torch.tensor([p_len], device=self.device, dtype=torch.int64)
+            out_audio = self.vc.inference(feats, p_len, self.sid, pitch, pitchf).float()
+            if volume_envelope != 1:
+                out_audio = AudioProcessor.change_rms(
+                    audio.cpu().numpy(),
+                    self.sample_rate,
+                    out_audio.cpu().numpy(),
+                    self.tgt_sr,
+                    volume_envelope,
+                )
+                out_audio = torch.as_tensor(out_audio, device=self.device)
 
-        if scaled_window != self.model_window:
-            if scaled_window not in self.resamplers:
-                self.resamplers[scaled_window] = tat.Resample(
-                    orig_freq=scaled_window,
-                    new_freq=self.model_window,
-                    dtype=torch.float32,
-                ).to(self.device)
-            out_audio = self.resamplers[scaled_window](
-                out_audio[: return_length * scaled_window]
-            )
+            scaled_window = int(np.floor(1.0 * self.model_window))
+
+            if scaled_window != self.model_window:
+                if scaled_window not in self.resamplers:
+                    self.resamplers[scaled_window] = tat.Resample(
+                        orig_freq=scaled_window,
+                        new_freq=self.model_window,
+                        dtype=torch.float32,
+                    ).to(self.device)
+                out_audio = self.resamplers[scaled_window](
+                    out_audio[: return_length * scaled_window]
+                )
+
+            if reduced_noise is not None:
+                out_audio = reduced_noise(out_audio.unsqueeze(0)).squeeze(0)
+            if board is not None:
+                out_audio = torch.as_tensor(
+                    board(out_audio.cpu().numpy(), self.tgt_sr),
+                    device=self.device,
+                )
 
         return out_audio
 

@@ -13,7 +13,7 @@ from torch import Tensor
 now_dir = os.getcwd()
 sys.path.append(now_dir)
 
-from rvc.lib.predictors.f0 import CREPE, FCPE, RMVPE, SWIFT
+from rvc.lib.predictors.f0 import CREPE, FCPE, RMVPE
 
 import logging
 
@@ -244,14 +244,6 @@ class Pipeline:
             )
             f0 = model.get_f0(x, p_len, filter_radius=0.006)
             del model
-        elif f0_method == "swift":
-            model = SWIFT(
-                device=self.device, sample_rate=self.sample_rate, hop_size=self.window
-            )
-            f0 = model.get_f0(
-                x, self.f0_min, self.f0_max, p_len, confidence_threshold=0.887
-            )
-            del model
 
         # f0 adjustments
         if f0_autotune is True:
@@ -358,7 +350,7 @@ class Pipeline:
                 feats0 = F.interpolate(feats0.permute(0, 2, 1), scale_factor=2).permute(
                     0, 2, 1
                 )
-                pitch, pitchf = pitch[:, :p_len], pitchf[:, :p_len]
+                pitch, pitchf = pitch[:, :p_len], pitchf[:, :p_len].float()
                 # Pitch protection blending
                 if protect < 0.5:
                     pitchff = pitchf.clone()
@@ -372,7 +364,7 @@ class Pipeline:
                 pitch, pitchf = None, None
             p_len = torch.tensor([p_len], device=self.device).long()
             audio1 = (
-                (net_g.infer(feats.float(), p_len, pitch, pitchf.float(), sid)[0][0, 0])
+                (net_g.infer(feats.float(), p_len, pitch, pitchf, sid)[0][0, 0])
                 .data.cpu()
                 .float()
                 .numpy()

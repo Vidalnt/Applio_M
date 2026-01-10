@@ -328,7 +328,7 @@ def train_tab():
                     choices=["RVC", "Applio"],
                     value="RVC",
                     interactive=True,
-                    visible=False,  # to be visible once pretraineds are ready
+                    visible=False,
                 )
             with gr.Column():
                 sampling_rate = gr.Radio(
@@ -343,10 +343,10 @@ def train_tab():
                     info=i18n(
                         "Choose the vocoder for audio synthesis:\n- **HiFi-GAN**: Default option, compatible with all clients.\n- **MRF HiFi-GAN**: Higher fidelity, Applio-only.\n- **RefineGAN**: Superior audio quality, Applio-only."
                     ),
-                    choices=["HiFi-GAN", "MRF HiFi-GAN", "RefineGAN"],
+                    choices=["HiFi-GAN", "RefineGAN"],  # "MRF HiFi-GAN", ],
                     value="HiFi-GAN",
-                    interactive=False,
-                    visible=False,  # to be visible once pretraineds are ready
+                    interactive=True,
+                    visible=True,
                 )
         with gr.Accordion(
             i18n("Advanced Settings"),
@@ -451,7 +451,7 @@ def train_tab():
                     info=i18n(
                         "It's recommended to deactivate this option if your dataset has already been processed."
                     ),
-                    value=True,
+                    value=False,
                     interactive=True,
                     visible=True,
                 )
@@ -462,7 +462,7 @@ def train_tab():
                         "Audio normalization: Select 'none' if the files are already normalized, 'pre' to normalize the entire input file at once, or 'post' to normalize each slice individually."
                     ),
                     choices=["none", "pre", "post"],
-                    value="none",
+                    value="post",
                     interactive=True,
                     visible=True,
                 )
@@ -523,7 +523,12 @@ def train_tab():
                 info=i18n(
                     "Pitch extraction algorithm to use for the audio conversion. The default algorithm is rmvpe, which is recommended for most cases."
                 ),
-                choices=["crepe", "crepe-tiny", "rmvpe", "fcpe"],
+                choices=[
+                    "crepe",
+                    "crepe-tiny",
+                    "rmvpe",
+                    # "fcpe"
+                ],
                 value="rmvpe",
                 interactive=True,
             )
@@ -533,11 +538,11 @@ def train_tab():
                 info=i18n("Model used for learning speaker embedding."),
                 choices=[
                     "contentvec",
-                    "spin",
+                    # "spin",
                     "spin-v2",
-                    "chinese-hubert-base",
-                    "japanese-hubert-base",
-                    "korean-hubert-base",
+                    # "chinese-hubert-base",
+                    # "japanese-hubert-base",
+                    # "korean-hubert-base",
                     "custom",
                 ],
                 value="contentvec",
@@ -628,7 +633,7 @@ def train_tab():
             total_epoch = gr.Slider(
                 1,
                 10000,
-                500,
+                200,
                 step=1,
                 label=i18n("Total Epoch"),
                 info=i18n(
@@ -935,6 +940,20 @@ def train_tab():
                         "value": "40000",
                     }, {"interactive": False, "__type__": "update", "value": "HiFi-GAN"}
 
+            def toggle_vocoder(vocoder):
+                if vocoder == "HiFi-GAN":
+                    return {
+                        "choices": ["32000", "40000", "48000"],
+                        "__type__": "update",
+                        "value": "40000",
+                    }
+                else:
+                    return {
+                        "choices": ["24000", "32000"],
+                        "__type__": "update",
+                        "value": "32000",                    
+                    }
+
             def update_slider_visibility(noise_reduction):
                 return gr.update(visible=noise_reduction)
 
@@ -947,6 +966,11 @@ def train_tab():
                 fn=toggle_architecture,
                 inputs=[architecture],
                 outputs=[sampling_rate, vocoder],
+            )
+            vocoder.change(
+                fn=toggle_vocoder,
+                inputs=[vocoder],
+                outputs=[sampling_rate],
             )
             refresh.click(
                 fn=refresh_models_and_datasets,
