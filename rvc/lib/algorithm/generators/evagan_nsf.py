@@ -1,15 +1,15 @@
 import math
-from typing import Optional, List, Tuple
+from typing import List, Optional, Tuple
 
 import torch
+from rvc.lib.algorithm.commons import init_weights
+from rvc.lib.algorithm.generators.hifigan_nsf import SourceModuleHnNSF
+from rvc.lib.algorithm.residuals import ResBlock, apply_mask
+from timm.models.layers import DropPath
 from torch.nn.utils import remove_weight_norm
 from torch.nn.utils.parametrizations import weight_norm
 from torch.utils.checkpoint import checkpoint
 
-from rvc.lib.algorithm.commons import init_weights
-from rvc.lib.algorithm.generators.hifigan_nsf import SourceModuleHnNSF
-from rvc.lib.algorithm.residuals import apply_mask, ResBlock
-from timm.models.layers import DropPath
 
 class LayerNorm(torch.nn.Module):
     def __init__(self, normalized_shape, eps=1e-6):
@@ -20,25 +20,22 @@ class LayerNorm(torch.nn.Module):
         self.normalized_shape = (normalized_shape,)
 
     def forward(self, x):
-        # x.shape = (B, C, T) -> transpose to (B, T, C) for layer_norm
         return torch.nn.functional.layer_norm(
             x.transpose(1, 2), self.normalized_shape, self.weight, self.bias, self.eps
         ).transpose(1, 2)
 
 
 class ConvNeXtBlock(torch.nn.Module):
-    """
-    ConvNeXt block as described in the paper for the Context Aware Module (CAM).
-    Reference: Figure 1 and Section 4.3 of the paper.
-    """
-    def __init__(self, dim, kernel_size=7, expansion=4, drop_path=0.):
+    def __init__(self, dim, kernel_size=7, expansion=4, drop_path=0.0):
         super().__init__()
-        self.dw_conv = torch.nn.Conv1d(dim, dim, kernel_size=kernel_size, padding=kernel_size // 2, groups=dim)
+        self.dw_conv = torch.nn.Conv1d(
+            dim, dim, kernel_size=kernel_size, padding=kernel_size // 2, groups=dim
+        )
         self.norm = LayerNorm(dim)
         self.pw_conv1 = torch.nn.Conv1d(dim, dim * expansion, kernel_size=1)
         self.act = torch.nn.SiLU()
         self.pw_conv2 = torch.nn.Conv1d(dim * expansion, dim, kernel_size=1)
-        self.drop_path = DropPath(drop_path) if drop_path > 0. else torch.nn.Identity()
+        self.drop_path = DropPath(drop_path) if drop_path > 0.0 else torch.nn.Identity()
 
     def forward(self, x):
         input = x
@@ -52,7 +49,9 @@ class ConvNeXtBlock(torch.nn.Module):
 
 
 class EvaResBlock(ResBlock):
-    def __init__(self, channels: int, kernel_size: int = 3, dilations: Tuple[int] = (1, 3, 5)):
+    def __init__(
+        self, channels: int, kernel_size: int = 3, dilations: Tuple[int] = (1, 3, 5)
+    ):
         super().__init__(channels, kernel_size, dilations)
 
     def forward(self, x: torch.Tensor, x_mask: torch.Tensor = None):
@@ -69,54 +68,52 @@ class EvaResBlock(ResBlock):
 
 
 class ContextAwareModule(torch.nn.Module):
-    def __init__(self, dims=[128, 256, 384, 512], depths=[3, 3, 9, 3], drop_path_rate=0.2):
+    def __init__(
+        self, dims=[128, 256, 384, 512], depths=[3, 3, 9, 3], drop_path_rate=0.2
+    ):
         super().__init__()
-        
+
         total_blocks = sum(depths)
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, total_blocks)]
-        
+
         self.stages = torch.nn.ModuleList()
         current_dim = dims[0]
         idx = 0
-        
+
         for i, depth in enumerate(depths):
             blocks = []
             for j in range(depth):
-                blocks.append(ConvNeXtBlock(
-                    dim=current_dim, 
-                    drop_path=dpr[idx + j]
-                ))
+                blocks.append(ConvNeXtBlock(dim=current_dim, drop_path=dpr[idx + j]))
             self.stages.append(torch.nn.Sequential(*blocks))
-            
-            # Perform dimension transition if necessary
-            if i < len(dims) - 1 and dims[i+1] != current_dim:
-                self.stages.append(torch.nn.Sequential(
-                    LayerNorm(current_dim),
-                    torch.nn.Conv1d(current_dim, dims[i+1], kernel_size=1)
-                ))
-                current_dim = dims[i+1]
-            
+
+            if i < len(dims) - 1 and dims[i + 1] != current_dim:
+                self.stages.append(
+                    torch.nn.Sequential(
+                        LayerNorm(current_dim),
+                        torch.nn.Conv1d(current_dim, dims[i + 1], kernel_size=1),
+                    )
+                )
+                current_dim = dims[i + 1]
+
             idx += depth
         self.apply(self._init_weights)
-    
+
     def _init_weights(self, m):
         if isinstance(m, (torch.nn.Conv1d, torch.nn.Linear)):
             torch.nn.init.kaiming_normal_(m.weight)
             if m.bias is not None:
                 torch.nn.init.constant_(m.bias, 0)
-    
+
     def forward(self, x):
         for stage in self.stages:
             x = stage(x)
         return x
 
-class EvaGanGenerator(torch.nn.Module):
+
+class EvaGanNSFGenerator(torch.nn.Module):
     def __init__(
         self,
-        initial_channel: int, #128
-        cam_depths: List[int], #[3, 3, 9, 3] 
-        cam_dims: List[int], #[128, 256, 384, 512]
-        drop_path_rate: float, #0.2
+        initial_channel: int,
         resblock_kernel_sizes: list,
         resblock_dilation_sizes: list,
         upsample_rates: list,
@@ -125,24 +122,27 @@ class EvaGanGenerator(torch.nn.Module):
         gin_channels: int,
         sr: int,
         checkpointing: bool = False,
+        cam_depths: List[int] = [3, 3, 9, 3],
+        cam_dims: List[int] = [128, 256, 384, 512],
+        drop_path_rate: float = 0.2,
     ):
-        super(EvaGanGenerator, self).__init__()
-        
+        super(EvaGanNSFGenerator, self).__init__()
+
         self.num_kernels = len(resblock_kernel_sizes)
         self.num_upsamples = len(upsample_rates)
         self.checkpointing = checkpointing
+
         self.f0_upsamp = torch.nn.Upsample(scale_factor=math.prod(upsample_rates))
         self.m_source = SourceModuleHnNSF(sample_rate=sr, harmonic_num=0)
 
-        self.conv_pre = torch.nn.Conv1d(
-            initial_channel, cam_dims[0], 7, 1, padding=3
-        )
+        self.conv_pre = torch.nn.Conv1d(initial_channel, cam_dims[0], 7, 1, padding=3)
         self.norm_pre = LayerNorm(cam_dims[0])
 
         self.cam = ContextAwareModule(cam_dims, cam_depths, drop_path_rate)
 
-        assert cam_dims[-1] == upsample_initial_channel, \
+        assert cam_dims[-1] == upsample_initial_channel, (
             f"CAM out dim {cam_dims[-1]} must equal upsample_initial_channel {upsample_initial_channel}"
+        )
 
         self.ups = torch.nn.ModuleList()
         self.noise_convs = torch.nn.ModuleList()
@@ -151,15 +151,14 @@ class EvaGanGenerator(torch.nn.Module):
             upsample_initial_channel // (2 ** (i + 1))
             for i in range(len(upsample_rates))
         ]
+
         stride_f0s = [
             math.prod(upsample_rates[i + 1 :]) if i + 1 < len(upsample_rates) else 1
             for i in range(len(upsample_rates))
         ]
 
         for i, (u, k) in enumerate(zip(upsample_rates, upsample_kernel_sizes)):
-            # handling odd upsampling rates
             if u % 2 == 0:
-                # old method
                 padding = (k - u) // 2
             else:
                 padding = u // 2 + u % 2
@@ -176,17 +175,7 @@ class EvaGanGenerator(torch.nn.Module):
                     )
                 )
             )
-            """ handling odd upsampling rates
-            #  s   k   p
-            # 40  80  20
-            # 32  64  16
-            #  4   8   2
-            #  2   3   1
-            # 63 125  31
-            #  9  17   4
-            #  3   5   1
-            #  1   1   0
-            """
+
             stride = stride_f0s[i]
             kernel = 1 if stride == 1 else stride * 2 - stride % 2
             padding = 0 if stride == 1 else (kernel - stride) // 2
@@ -222,10 +211,9 @@ class EvaGanGenerator(torch.nn.Module):
     ):
         har_source, _, _ = self.m_source(f0, self.upp)
         har_source = har_source.transpose(1, 2)
-        # new tensor
+
         x = self.conv_pre(x)
-        # Initial normalization for stability
-        x = self.norm_pre(x) 
+        x = self.norm_pre(x)
 
         if self.training and self.checkpointing:
             x = checkpoint(self.cam, x, use_reentrant=False)
@@ -237,7 +225,6 @@ class EvaGanGenerator(torch.nn.Module):
 
         for i, (ups, noise_convs) in enumerate(zip(self.ups, self.noise_convs)):
             x = torch.nn.functional.silu(x)
-            # Apply upsampling layer
             if self.training and self.checkpointing:
                 x = checkpoint(ups, x, use_reentrant=False)
                 x = x + noise_convs(har_source)
