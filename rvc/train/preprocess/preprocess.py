@@ -26,7 +26,7 @@ logging.getLogger("numba.core.ssa").setLevel(logging.WARNING)
 logging.getLogger("numba.core.interpreter").setLevel(logging.WARNING)
 
 OVERLAP = 0.3
-PERCENTAGE = 3.0
+PERCENTAGE = 4.0
 MAX_AMPLITUDE = 0.9
 ALPHA = 0.75
 HIGH_PASS_CUTOFF = 48
@@ -39,7 +39,7 @@ class PreProcess:
         self.slicer = Slicer(
             sr=sr,
             threshold=-42,
-            min_length=1500,
+            min_length=3000,
             min_interval=400,
             hop_size=15,
             max_sil_kept=500,
