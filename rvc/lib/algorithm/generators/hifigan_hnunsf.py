@@ -1,5 +1,5 @@
 import math
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -13,6 +13,20 @@ from rvc.lib.algorithm.residuals import LRELU_SLOPE, ResBlock
 
 
 class SineGeneratorSeparate(nn.Module):
+    """
+    Sine wave and noise generator that outputs harmonic and aperiodic components separately.
+
+    Unlike standard NSF which mixes signals immediately, this module keeps them distinct
+    to allow the downstream neural network to apply dynamic mixing based on periodicity estimation,
+    following the HN-uSFGAN architecture.
+
+    Args:
+        sampling_rate (int): Audio sampling rate (e.g., 40000, 48000).
+        num_harmonics (int): Number of harmonic overtones to generate alongside the fundamental.
+        sine_amplitude (float): Base amplitude for the sine wave.
+        noise_stddev (float): Standard deviation for the additive Gaussian noise.
+    """
+
     def __init__(
         self,
         sampling_rate: int,
@@ -27,7 +41,22 @@ class SineGeneratorSeparate(nn.Module):
         self.noise_stddev = noise_stddev
         self.waveform_dim = self.num_harmonics + 1
 
-    def _generate_sine_wave(self, f0: torch.Tensor, upsampling_factor: int):
+    def _generate_sine_wave(
+        self, f0: torch.Tensor, upsampling_factor: int
+    ) -> torch.Tensor:
+        """
+        Generates a sine wave based on the fundamental frequency (F0).
+
+        Implements continuous phase accumulation and adds random phase jitter
+        to harmonics to prevent metallic artifacts in high frequencies.
+
+        Args:
+            f0 (Tensor): Fundamental Frequency tensor. Shape: (Batch, Length, 1).
+            upsampling_factor (int): Temporal scaling factor for wave generation.
+
+        Returns:
+            Tensor: Generated sine wave. Shape: (Batch, Length * upsample, harmonics+1).
+        """
         batch_size, length, _ = f0.shape
         upsampling_grid = torch.arange(
             1, upsampling_factor + 1, dtype=f0.dtype, device=f0.device
@@ -52,7 +81,21 @@ class SineGeneratorSeparate(nn.Module):
         sine_waves = torch.sin(2 * math.pi * phase_increments)
         return sine_waves
 
-    def forward(self, f0: torch.Tensor, upsampling_factor: int):
+    def forward(
+        self, f0: torch.Tensor, upsampling_factor: int
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Forward pass to generate excitation signals.
+
+        Args:
+            f0 (Tensor): Fundamental frequency (B, T, 1).
+            upsampling_factor (int): Required upsampling factor.
+
+        Returns:
+            Tuple[Tensor, Tensor]:
+                - sine_waves: Pure harmonic signal.
+                - noise: Gaussian noise signal (same shape).
+        """
         with torch.no_grad():
             f0 = f0.unsqueeze(-1)
             sine_waves = (
@@ -63,6 +106,14 @@ class SineGeneratorSeparate(nn.Module):
 
 
 class SourceModuleHnSeparate(nn.Module):
+    """
+    Harmonic-Noise (HN) Source Module.
+
+    Acts as a wrapper for the wave generator. It projects the generated waves (sine and noise)
+    through separate linear layers to prepare input features for the neural network.
+    It handles explicit type casting required for Automatic Mixed Precision (AMP) training.
+    """
+
     def __init__(
         self,
         sample_rate: int,
@@ -79,16 +130,42 @@ class SourceModuleHnSeparate(nn.Module):
         self.l_tanh = nn.Tanh()
 
     def forward(self, x: torch.Tensor, upsample_factor: int = 1):
+        """
+        Generates and projects source features.
+
+        Args:
+            x (Tensor): F0 input.
+            upsample_factor (int): Upsampling factor.
+
+        Returns:
+            Tuple[Tensor, Tensor]: Processed Sine and Noise features. Shape: (B, C, T).
+        """
         sine_wavs, noise_wavs = self.l_sin_gen(x, upsample_factor)
+
         dtype = self.l_linear_s.weight.dtype
         sine_wavs = sine_wavs.to(dtype=dtype)
         noise_wavs = noise_wavs.to(dtype=dtype)
+
         sine_merge = self.l_tanh(self.l_linear_s(sine_wavs))
         noise_merge = self.l_tanh(self.l_linear_n(noise_wavs))
+
         return sine_merge.transpose(1, 2), noise_merge.transpose(1, 2)
 
 
 class PeriodicityEstimator(nn.Module):
+    """
+    Periodicity Estimator (V/UV Classification Network).
+
+    Based on the HN-uSFGAN paper. This sub-network takes spectrogram features
+    (or pre-convolution outputs) and estimates a soft mask (between 0 and 1)
+    indicating how much of the signal is periodic (voiced) vs aperiodic (unvoiced).
+
+    Architecture:
+        - 3 layers of 1D Convolution.
+        - ReLU activation for hidden layers (per original paper).
+        - Sigmoid activation at the output for [0, 1] normalization.
+    """
+
     def __init__(
         self,
         in_channels,
@@ -127,6 +204,14 @@ class PeriodicityEstimator(nn.Module):
         self.layers = nn.Sequential(*modules)
 
     def forward(self, x):
+        """
+        Args:
+            x (Tensor): Input features (B, C, T).
+
+        Returns:
+            Tensor: Periodicity mask 'a' (B, 1, T).
+                    1.0 = Fully Periodic, 0.0 = Fully Noise.
+        """
         return self.layers(x)
 
     def remove_weight_norm(self):
@@ -136,6 +221,23 @@ class PeriodicityEstimator(nn.Module):
 
 
 class HiFiGANNSFGenerator(nn.Module):
+    """
+    HiFiGAN Generator with Hybrid NSF Architecture (HN-uSFGAN).
+
+    This version replaces the simple source injection of traditional NSF with a
+    parallel dual-branch scheme controlled by a periodicity estimator.
+
+    Core Logic (Eq. 6 from HN-uSFGAN paper):
+        Excitation Signal = (a * H) + ((1 - a) * N)
+        Where:
+            H = Features from the Harmonic branch (Sine)
+            N = Features from the Noise branch
+            a = Estimated periodicity mask
+
+    Args:
+        Standard HiFiGAN arguments (initial_channel, resblock_kernel_sizes, etc.)
+    """
+
     def __init__(
         self,
         initial_channel: int,
@@ -157,6 +259,7 @@ class HiFiGANNSFGenerator(nn.Module):
         self.lrelu_slope = LRELU_SLOPE
 
         self.m_source = SourceModuleHnSeparate(sample_rate=sr, harmonic_num=0)
+
         self.conv_pre = weight_norm(
             nn.Conv1d(initial_channel, upsample_initial_channel, 7, 1, padding=3)
         )
@@ -239,6 +342,17 @@ class HiFiGANNSFGenerator(nn.Module):
     def forward(
         self, x: torch.Tensor, f0: torch.Tensor, g: Optional[torch.Tensor] = None
     ):
+        """
+        Forward pass of the Generator.
+
+        Args:
+            x (Tensor): Input Mel Spectrogram (B, Mel_Dim, T_mel).
+            f0 (Tensor): Fundamental Frequency (B, T_mel, 1).
+            g (Tensor, optional): Global/Speaker embedding (B, Gin_Dim, 1).
+
+        Returns:
+            Tensor: Generated Audio (B, 1, T_audio).
+        """
         har_source, noise_source = self.m_source(f0, self.upp)
 
         x = self.conv_pre(x)
