@@ -10,7 +10,6 @@
 *.m4a
 *.bin
 *.wav
-*.txt
 *.zip
 *.png
 *.safetensors

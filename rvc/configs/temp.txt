@@ -1,0 +1,1 @@
+// Options: 102400 (2.56s - Paper Ideal), 51200 (1.28s - Balanced), 25600 (0.64s - Min Recommended), 12800 (0.32s - RVC Default, too short for EVA-GAN context)
