@@ -108,18 +108,6 @@ class Synthesizer(torch.nn.Module):
                     num_mels=inter_channels,
                     checkpointing=checkpointing,
                 )
-            elif vocoder == "EVA-GAN":
-                self.dec = EvaGanNSFGenerator(
-                    initial_channel=inter_channels,
-                    resblock_kernel_sizes=resblock_kernel_sizes,
-                    resblock_dilation_sizes=resblock_dilation_sizes,
-                    upsample_rates=upsample_rates,
-                    upsample_initial_channel=upsample_initial_channel,
-                    upsample_kernel_sizes=upsample_kernel_sizes,
-                    gin_channels=gin_channels,
-                    sr=sr,
-                    checkpointing=checkpointing,
-                )
             elif vocoder == "SiFi-GAN":
                 self.dec = SiFiGANGenerator(
                     in_channels=inter_channels,
