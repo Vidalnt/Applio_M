@@ -46,7 +46,7 @@ feats = feats.view(1, -1)
 
 with torch.no_grad():
     try:
-        cv_model = HubertModel.from_pretrained(cv_path, local_files_only=True)
+        cv_model = HubertModel.from_pretrained(cv_path)
         cv_feats = cv_model(feats)["last_hidden_state"]
         cv_feats = cv_feats.squeeze(0).float().cpu().numpy()
         print("cv", cv_feats.shape)
@@ -57,7 +57,7 @@ with torch.no_grad():
         print(f"Error with contentvec: {e}")
 
     try:
-        spin2_model = HubertModel.from_pretrained(spin2_path, local_files_only=True)
+        spin2_model = HubertModel.from_pretrained(spin2_path)
         spin2_feats = spin2_model(feats)["last_hidden_state"]
         spin2_feats = spin2_feats.squeeze(0).float().cpu().numpy()
         print("spin-v2", spin2_feats.shape)
