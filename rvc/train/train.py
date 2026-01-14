@@ -490,8 +490,8 @@ def run(
             fn_reg_loss = fn_reg_loss.to(device)
 
     if n_gpus > 1 and device.type == "cuda":
-        net_g = DDP(net_g, device_ids=[device_id])
-        net_d = DDP(net_d, device_ids=[device_id])
+        net_g = DDP(net_g, device_ids=[device_id], find_unused_parameters=True)
+        net_d = DDP(net_d, device_ids=[device_id], find_unused_parameters=True)
 
     if rank == 0 and train_dtype == torch.bfloat16:
         print("Using BFloat16 for training.")
