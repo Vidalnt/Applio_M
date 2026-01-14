@@ -484,6 +484,11 @@ def run(
             elim_0th=True,
         )
 
+        if torch.cuda.is_available():
+            fn_reg_loss = fn_reg_loss.cuda(device_id)
+        else:
+            fn_reg_loss = fn_reg_loss.to(device)
+
     if n_gpus > 1 and device.type == "cuda":
         net_g = DDP(net_g, device_ids=[device_id])
         net_d = DDP(net_d, device_ids=[device_id])
