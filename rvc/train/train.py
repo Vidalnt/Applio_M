@@ -479,7 +479,7 @@ def run(
             fft_size=config.data.filter_length,
             hop_size=config.data.hop_length,
             n_mels=config.data.n_mel_channels,
-            f0_floor=40,
+            f0_floor=50,
             f0_ceil=1100,
             elim_0th=True,
         )

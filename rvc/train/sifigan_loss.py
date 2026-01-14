@@ -126,7 +126,7 @@ class ResidualLoss(nn.Module):
         sample_rate=24000,
         fft_size=1024,
         hop_size=240,
-        f0_floor=40,
+        f0_floor=50,
         f0_ceil=1100,
         n_mels=80,
         fmin=0,
