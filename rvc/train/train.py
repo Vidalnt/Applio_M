@@ -42,8 +42,8 @@ from utils import (
 # Zluda hijack
 import rvc.lib.zluda
 from rvc.lib.algorithm import commons
-from rvc.lib.algorithm.sifigan_loss import ResidualLoss
 from rvc.train.process.extract_model import extract_model
+from rvc.train.sifigan_loss import ResidualLoss
 
 # Parse command line arguments
 model_name = sys.argv[1]
