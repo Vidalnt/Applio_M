@@ -42,6 +42,7 @@ from utils import (
 # Zluda hijack
 import rvc.lib.zluda
 from rvc.lib.algorithm import commons
+from rvc.lib.algorithm.sifigan_loss import ResidualLoss
 from rvc.train.process.extract_model import extract_model
 
 # Parse command line arguments
@@ -132,6 +133,7 @@ avg_losses = {
     "kl_loss_50": deque(maxlen=50),
     "mel_loss_50": deque(maxlen=50),
     "gen_loss_50": deque(maxlen=50),
+    "reg_loss_50": deque(maxlen=50),
 }
 
 import logging
@@ -470,6 +472,18 @@ def run(
         print("Using Single-Scale Mel loss function")
 
     # Wrap models with DDP for multi-gpu processing
+    fn_reg_loss = None
+    if vocoder == "SiFi-GAN":
+        fn_reg_loss = ResidualLoss(
+            sample_rate=config.data.sample_rate,
+            fft_size=config.data.filter_length,
+            hop_size=config.data.hop_length,
+            n_mels=config.data.n_mel_channels,
+            f0_floor=40,
+            f0_ceil=1100,
+            elim_0th=True,
+        )
+
     if n_gpus > 1 and device.type == "cuda":
         net_g = DDP(net_g, device_ids=[device_id])
         net_d = DDP(net_d, device_ids=[device_id])
@@ -598,7 +612,9 @@ def run(
             device_id,
             reference,
             fn_mel_loss,
+            fn_reg_loss,
             scaler,
+            vocoder,
         )
 
         scheduler_g.step()
@@ -620,7 +636,9 @@ def train_and_evaluate(
     device_id,
     reference,
     fn_mel_loss,
+    fn_reg_loss,
     scaler,
+    vocoder_name,
 ):
     """
     Trains and evaluates the model for one epoch.
@@ -699,10 +717,20 @@ def train_and_evaluate(
                 model_output = net_g(
                     phone, phone_lengths, pitch, pitchf, spec, spec_lengths, sid
                 )
-                y_hat, ids_slice, x_mask, z_mask, (z, z_p, m_p, logs_p, m_q, logs_q) = (
-                    model_output
-                )
-                # slice of the original waveform to match a generate slice
+
+                excitation = None
+                if vocoder_name == "SiFi-GAN":
+                    y_hat, ids_slice, x_mask, z_mask, info_tuple = model_output
+                    z, z_p, m_p, logs_p, m_q, logs_q, excitation = info_tuple
+                else:
+                    (
+                        y_hat,
+                        ids_slice,
+                        x_mask,
+                        z_mask,
+                        (z, z_p, m_p, logs_p, m_q, logs_q),
+                    ) = model_output
+
                 if randomized:
                     wave = commons.slice_segments(
                         wave,
@@ -721,11 +749,15 @@ def train_and_evaluate(
                 if train_dtype == torch.float16:
                     scaler.scale(loss_disc).backward()
                     scaler.unscale_(optim_d)
-                    grad_norm_d = commons.grad_norm(net_d.parameters())
+                    grad_norm_d = torch.nn.utils.clip_grad_norm_(
+                        net_d.parameters(), 1000.0
+                    )
                     scaler.step(optim_d)
                 else:
                     loss_disc.backward()
-                    grad_norm_d = commons.grad_norm(net_d.parameters())
+                    grad_norm_d = torch.nn.utils.clip_grad_norm_(
+                        net_d.parameters(), 1000.0
+                    )
                     optim_d.step()
 
             with torch.amp.autocast(
@@ -761,7 +793,26 @@ def train_and_evaluate(
             loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * config.train.c_kl
             loss_fm = feature_loss(fmap_r, fmap_g)
             loss_gen, _ = generator_loss(y_d_hat_g)
-            loss_gen_all = loss_gen + loss_fm + loss_mel + loss_kl
+
+            loss_reg = 0
+            if vocoder_name == "SiFi-GAN" and fn_reg_loss is not None:
+                if randomized:
+                    pitch_segment_len = (
+                        config.train.segment_size // config.data.hop_length
+                    )
+
+                    pitchf_slice = commons.slice_segments(
+                        pitchf,
+                        ids_slice,
+                        pitch_segment_len,
+                        2,
+                    )
+                else:
+                    pitchf_slice = pitchf
+
+                loss_reg = fn_reg_loss(excitation, wave, pitchf_slice)
+
+            loss_gen_all = loss_gen + loss_fm + loss_mel + loss_kl + loss_reg
 
             if loss_gen_all < lowest_value["value"]:
                 lowest_value = {
@@ -773,12 +824,12 @@ def train_and_evaluate(
             if train_dtype == torch.float16:
                 scaler.scale(loss_gen_all).backward()
                 scaler.unscale_(optim_g)
-                grad_norm_g = commons.grad_norm(net_g.parameters())
+                grad_norm_g = torch.nn.utils.clip_grad_norm_(net_g.parameters(), 1000.0)
                 scaler.step(optim_g)
                 scaler.update()
             else:
                 loss_gen_all.backward()
-                grad_norm_g = commons.grad_norm(net_g.parameters())
+                grad_norm_g = torch.nn.utils.clip_grad_norm_(net_g.parameters(), 1000.0)
                 optim_g.step()
 
             global_step += 1
@@ -792,6 +843,8 @@ def train_and_evaluate(
             avg_losses["kl_loss_50"].append(loss_kl.detach())
             avg_losses["mel_loss_50"].append(loss_mel.detach())
             avg_losses["gen_loss_50"].append(loss_gen_all.detach())
+            if loss_reg != 0:
+                avg_losses["reg_loss_50"].append(loss_reg.detach())
 
             if rank == 0 and global_step % 50 == 0:
                 # logging rolling averages
@@ -819,6 +872,11 @@ def train_and_evaluate(
                         torch.stack(list(avg_losses["gen_loss_50"]))
                     ),
                 }
+                if len(avg_losses["reg_loss_50"]) > 0:
+                    scalar_dict["loss_avg_50/g/reg"] = torch.mean(
+                        torch.stack(list(avg_losses["reg_loss_50"]))
+                    )
+
                 summarize(
                     writer=writer,
                     global_step=global_step,
@@ -877,6 +935,8 @@ def train_and_evaluate(
             "loss/g/mel": loss_mel,
             "loss/g/kl": loss_kl,
         }
+        if vocoder_name == "SiFi-GAN":
+            scalar_dict["loss/g/reg"] = loss_reg
 
         image_dict = {
             "slice/mel_org": plot_spectrogram_to_numpy(y_mel[0].data.cpu().numpy()),

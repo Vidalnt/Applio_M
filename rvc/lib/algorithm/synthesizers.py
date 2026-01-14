@@ -1,12 +1,16 @@
-import torch
 from typing import Optional
+
+import torch
+
+from rvc.lib.algorithm.commons import rand_slice_segments, slice_segments
+from rvc.lib.algorithm.encoders import PosteriorEncoder, TextEncoder
+from rvc.lib.algorithm.generators.evagan_nsf import EvaGanNSFGenerator
+from rvc.lib.algorithm.generators.hifigan import HiFiGANGenerator
 from rvc.lib.algorithm.generators.hifigan_mrf import HiFiGANMRFGenerator
 from rvc.lib.algorithm.generators.hifigan_nsf import HiFiGANNSFGenerator
-from rvc.lib.algorithm.generators.hifigan import HiFiGANGenerator
 from rvc.lib.algorithm.generators.refinegan import RefineGANGenerator
-from rvc.lib.algorithm.commons import slice_segments, rand_slice_segments
+from rvc.lib.algorithm.generators.sifigan import SiFiGANGenerator
 from rvc.lib.algorithm.residuals import ResidualCouplingBlock
-from rvc.lib.algorithm.encoders import TextEncoder, PosteriorEncoder
 
 
 class Synthesizer(torch.nn.Module):
@@ -68,6 +72,7 @@ class Synthesizer(torch.nn.Module):
         self.segment_size = segment_size
         self.use_f0 = use_f0
         self.randomized = randomized
+        self.vocoder = vocoder
 
         self.enc_p = TextEncoder(
             inter_channels,
@@ -104,6 +109,33 @@ class Synthesizer(torch.nn.Module):
                     num_mels=inter_channels,
                     checkpointing=checkpointing,
                 )
+            elif vocoder == "EVA-GAN":
+                self.dec = EvaGanNSFGenerator(
+                    initial_channel=inter_channels,
+                    resblock_kernel_sizes=resblock_kernel_sizes,
+                    resblock_dilation_sizes=resblock_dilation_sizes,
+                    upsample_rates=upsample_rates,
+                    upsample_initial_channel=upsample_initial_channel,
+                    upsample_kernel_sizes=upsample_kernel_sizes,
+                    gin_channels=gin_channels,
+                    sr=sr,
+                    checkpointing=checkpointing,
+                )
+            elif vocoder == "SiFi-GAN":
+                self.dec = SiFiGANGenerator(
+                    in_channels=inter_channels,
+                    out_channels=1,
+                    channels=upsample_initial_channel,
+                    upsample_scales=upsample_rates,
+                    upsample_kernel_sizes=upsample_kernel_sizes,
+                    sample_rate=sr,
+                    gin_channels=gin_channels,
+                    filter_network_params={
+                        "resblock_kernel_sizes": resblock_kernel_sizes,
+                        "resblock_dilations": resblock_dilation_sizes,
+                        "use_additional_convs": False,
+                    },
+                )
             else:
                 self.dec = HiFiGANNSFGenerator(
                     inter_channels,
@@ -122,6 +154,9 @@ class Synthesizer(torch.nn.Module):
                 self.dec = None
             elif vocoder == "RefineGAN":
                 print("RefineGAN does not support training without pitch guidance.")
+                self.dec = None
+            elif vocoder == "SiFi-GAN":
+                print("SiFi-GAN does not support training without pitch guidance.")
                 self.dec = None
             else:
                 self.dec = HiFiGANGenerator(
@@ -191,13 +226,36 @@ class Synthesizer(torch.nn.Module):
                     o = self.dec(z_slice, pitchf, g=g)
                 else:
                     o = self.dec(z_slice, g=g)
+
+                excitation = None
+                if self.vocoder == "SiFi-GAN":
+                    o, excitation = o
+                    return (
+                        o,
+                        ids_slice,
+                        x_mask,
+                        y_mask,
+                        (z, z_p, m_p, logs_p, m_q, logs_q, excitation),
+                    )
+
                 return o, ids_slice, x_mask, y_mask, (z, z_p, m_p, logs_p, m_q, logs_q)
-            # future use for finetuning using the entire dataset each pass
             else:
                 if self.use_f0:
                     o = self.dec(z, pitchf, g=g)
                 else:
                     o = self.dec(z, g=g)
+
+                excitation = None
+                if self.vocoder == "SiFi-GAN":
+                    o, excitation = o
+                    return (
+                        o,
+                        None,
+                        x_mask,
+                        y_mask,
+                        (z, z_p, m_p, logs_p, m_q, logs_q, excitation),
+                    )
+
                 return o, None, x_mask, y_mask, (z, z_p, m_p, logs_p, m_q, logs_q)
         else:
             return None, None, x_mask, None, (None, None, m_p, logs_p, None, None)
@@ -234,10 +292,13 @@ class Synthesizer(torch.nn.Module):
                 nsff0 = nsff0[:, head:]
 
         z = self.flow(z_p, x_mask, g=g, reverse=True)
-        o = (
-            self.dec(z * x_mask, nsff0, g=g)
-            if self.use_f0
-            else self.dec(z * x_mask, g=g)
-        )
+
+        if self.use_f0:
+            o = self.dec(z * x_mask, nsff0, g=g)
+        else:
+            o = self.dec(z * x_mask, g=g)
+
+        if self.vocoder == "SiFi-GAN":
+            o = o[0]
 
         return o, x_mask, (z, z_p, m_p, logs_p)
