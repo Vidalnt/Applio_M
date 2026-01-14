@@ -4,7 +4,6 @@ import torch
 
 from rvc.lib.algorithm.commons import rand_slice_segments, slice_segments
 from rvc.lib.algorithm.encoders import PosteriorEncoder, TextEncoder
-from rvc.lib.algorithm.generators.evagan_nsf import EvaGanNSFGenerator
 from rvc.lib.algorithm.generators.hifigan import HiFiGANGenerator
 from rvc.lib.algorithm.generators.hifigan_mrf import HiFiGANMRFGenerator
 from rvc.lib.algorithm.generators.hifigan_nsf import HiFiGANNSFGenerator
