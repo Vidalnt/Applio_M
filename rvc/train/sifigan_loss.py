@@ -151,19 +151,14 @@ class ResidualLoss(nn.Module):
         self.register_buffer("melmat", torch.from_numpy(melmat).float())
 
     def forward(self, s, y, f):
-        if s.dim() == 3:
-            s = s.squeeze(1)
-        if y.dim() == 3:
-            y = y.squeeze(1)
-        if f.dim() == 3:
-            f = f.squeeze(1)
-        elif f.dim() == 2 and f.size(1) == 1:
-            f = f.squeeze(1)
+        # s: (B, 1, T), y: (B, 1, T), f: (B, 1, T')
+        s, f = s.squeeze(1), f.squeeze(1)
 
         with torch.no_grad():
-            envelope_log = self.cheaptrick.forward(y, f, self.power, self.elim_0th)
-            y_mag = stft(
-                y,
+            e = self.cheaptrick.forward(y, f, self.power, self.elim_0th)
+
+            y = stft(
+                y.squeeze(1),
                 self.fft_size,
                 self.hop_size,
                 self.win_length,
@@ -171,22 +166,23 @@ class ResidualLoss(nn.Module):
                 power=self.power,
             )
 
-            minlen = min(envelope_log.size(1), y_mag.size(1))
-            envelope_log = envelope_log[:, :minlen, :]
-            y_mag = y_mag[:, :minlen, :]
-
-            y_log = torch.log(torch.clamp(y_mag, min=1e-7))
-            target_residual = torch.exp(y_log - envelope_log)
+            minlen = min(e.size(1), y.size(1))
+            e, y = e[:, :minlen, :], y[:, :minlen, :]
 
             if self.elim_0th:
-                y_mean = y_mag.mean(dim=-1, keepdim=True)
-                t_mean = target_residual.mean(dim=-1, keepdim=True)
-                target_residual = target_residual * (y_mean / (t_mean + 1e-7))
+                y_mean = y.mean(dim=-1, keepdim=True)
 
-            target_mel = torch.matmul(target_residual, self.melmat)
-            target_log_mel = torch.log(torch.clamp(target_mel, min=1e-7))
+            y = torch.log(torch.clamp(y, min=1e-7))
+            t = (y - e).exp()
 
-        s_mag = stft(
+            if self.elim_0th:
+                t_mean = t.mean(dim=-1, keepdim=True)
+                t = y_mean / (t_mean + 1e-7) * t
+
+            t = torch.matmul(t, self.melmat)
+            t = torch.log(torch.clamp(t, min=1e-7))
+
+        s = stft(
             s,
             self.fft_size,
             self.hop_size,
@@ -194,14 +190,8 @@ class ResidualLoss(nn.Module):
             self.window,
             power=self.power,
         )
+        s = s[:, :minlen, :]
+        s = torch.matmul(s, self.melmat)
+        s = torch.log(torch.clamp(s, min=1e-7))
 
-        minlen = min(minlen, s_mag.size(1))
-        s_mag = s_mag[:, :minlen, :]
-        target_log_mel = target_log_mel[:, :minlen, :]
-
-        s_mel = torch.matmul(s_mag, self.melmat)
-        s_log_mel = torch.log(torch.clamp(s_mel, min=1e-7))
-
-        loss = F.l1_loss(s_log_mel, target_log_mel.detach())
-
-        return loss
+        return F.l1_loss(s, t.detach())
