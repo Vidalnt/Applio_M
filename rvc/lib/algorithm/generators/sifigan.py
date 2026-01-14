@@ -255,7 +255,7 @@ class SiFiGANGenerator(torch.nn.Module):
             "resblock_dilations": [(1, 3, 5), (1, 3, 5), (1, 3, 5)],
             "use_additional_convs": False,
         },
-        sample_rate=40000,
+        sample_rate=24000,
         gin_channels=0,
         share_upsamples=False,
         share_downsamples=False,

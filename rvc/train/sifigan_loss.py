@@ -123,12 +123,12 @@ class CheapTrick(nn.Module):
 class ResidualLoss(nn.Module):
     def __init__(
         self,
-        sample_rate=40000,
-        fft_size=2048,
-        hop_size=400,
+        sample_rate=24000,
+        fft_size=1024,
+        hop_size=240,
         f0_floor=40,
         f0_ceil=1100,
-        n_mels=125,
+        n_mels=80,
         fmin=0,
         fmax=None,
         power=False,
