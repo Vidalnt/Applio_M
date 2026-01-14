@@ -81,9 +81,9 @@ class AdaptiveLiftering(nn.Module):
             )
             smoothing_lifter[0] = 1.0
             arg = math.pi * f0 * quefrency
-            smoothing_lifter[1:] = torch.sin(arg[1:]) / arg[1:]
+            smoothing_lifter[1:] = torch.sin(arg) / arg
             compensation_lifter[0] = self.q0 + 2.0 * self.q1
-            compensation_lifter[1:] = self.q0 + 2.0 * self.q1 * torch.cos(2.0 * arg[1:])
+            compensation_lifter[1:] = self.q0 + 2.0 * self.q1 * torch.cos(2.0 * arg)
             self.smoothing_lifter[f0] = smoothing_lifter
             self.compensation_lifter[f0] = compensation_lifter
 
