@@ -4,8 +4,8 @@ import torch
 
 def pd_indexing(x, d, dilation, batch_index, ch_index):
     B, C, T = x.size()
-    batch_index = torch.arange(0, B, dtype=torch.long, device=x.device).reshape(B, 1, 1)
-    ch_index = torch.arange(0, C, dtype=torch.long, device=x.device).reshape(1, C, 1)
+    # batch_index = torch.arange(0, B, dtype=torch.long, device=x.device).reshape(B, 1, 1)
+    # ch_index = torch.arange(0, C, dtype=torch.long, device=x.device).reshape(1, C, 1)
 
     dilations = torch.clamp((d * dilation).long(), min=1)
 
