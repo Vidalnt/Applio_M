@@ -60,10 +60,10 @@ class SignalGenerator(torch.nn.Module):
         f0_upsampled = torch.nn.functional.interpolate(
             f0, size=T_target, mode="linear", align_corners=False
         )
-        radious = (f0_upsampled / self.sample_rate) % 1
+        radious = (f0_upsampled.double() / self.sample_rate) % 1
 
         phase = torch.cumsum(radious, dim=2) * 2 * np.pi
-        sine = vuv * torch.sin(phase) * self.sine_amp
+        sine = vuv * torch.sin(phase).to(dtype=f0.dtype) * self.sine_amp
 
         if self.noise_amp > 0:
             noise_amp_mod = vuv * self.noise_amp + (1.0 - vuv) * (self.noise_amp / 3.0)
