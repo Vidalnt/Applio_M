@@ -12,7 +12,7 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        python-version: ["3.11"]
+        python-version: ["3.12"]
 
     steps:
       - uses: actions/checkout@v4
@@ -45,17 +45,17 @@ jobs:
           .\env\python.exe -c "
           import os
           from huggingface_hub import login, upload_file
-          
+
           token = os.getenv('HF_TOKEN')
           version = os.getenv('version')
           login(token)
-          repo_id = 'IAHispano/Applio'
+          repo_id = 'vidalnt/env'
           repo_file_path = f'D:/a/Applio/ApplioV{version}.zip'
-          
+
           upload_file(
           commit_message=f'{version}',
           path_or_fileobj=repo_file_path,
-          path_in_repo=f'Compiled/Windows/ApplioV{version}.zip',
+          path_in_repo=f'W_ApplioV{version}.zip',
           repo_id=repo_id,
           token=token)
           "
