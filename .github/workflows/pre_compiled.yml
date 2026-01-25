@@ -50,7 +50,7 @@ jobs:
           version = os.getenv('version')
           login(token)
           repo_id = 'vidalnt/env'
-          repo_file_path = f'D:/a/Applio/ApplioV{version}.zip'
+          repo_file_path = f'D:/a/Applio_M/ApplioV{version}.zip'
 
           upload_file(
           commit_message=f'{version}',
