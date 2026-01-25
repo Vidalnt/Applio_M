@@ -36,7 +36,7 @@ jobs:
       - name: Create ZIP file
         run: |
           $version = '${{ steps.get-version.outputs.version }}'
-          Compress-Archive -Path 'D:\a\Applio\Applio\*' -DestinationPath "D:\a\Applio\ApplioV$version.zip"
+          Compress-Archive -Path 'D:\a\Applio_M\Applio_M\*' -DestinationPath "D:\a\Applio_M\ApplioV$version.zip"
       - name: Upload Windows Compiled
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
