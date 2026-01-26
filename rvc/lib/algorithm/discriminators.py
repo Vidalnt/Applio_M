@@ -326,7 +326,7 @@ class MultiPeriodDiscriminator(torch.nn.Module):
                 for r in resolutions
             ]
         )
-        if version == "v2":
+        if version == "v3":
             self.discriminators.append(
                 UnivHDDiscriminator(
                     use_spectral_norm=use_spectral_norm,
