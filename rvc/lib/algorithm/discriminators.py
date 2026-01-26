@@ -50,7 +50,7 @@ class HarmonicFilter(nn.Module):
 
         # 1. Create linear STFT frequency axis (f) accurately matching FFT bins
         # Shape: (1, 1, n_fft/2 + 1) for broadcasting
-        # Usamos rfftfreq para mayor precisión matemática con la FFT real
+        # We use rfftfreq for greater mathematical precision with the real FFT.
         # freqs = torch.fft.rfftfreq(n_fft, d=1/sample_rate)
         # self.register_buffer("f_stft", freqs.view(1, 1, -1).float())
 
