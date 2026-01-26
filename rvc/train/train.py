@@ -432,6 +432,10 @@ def run(
         config.model.use_spectral_norm,
         checkpointing=checkpointing,
         version=disc_version,
+        sample_rate=config.data.sample_rate,
+        n_fft=config.data.filter_length,
+        hop_length=config.data.hop_length,
+        win_length=config.data.win_length,
     )
 
     if torch.cuda.is_available():
