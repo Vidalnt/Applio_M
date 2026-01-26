@@ -2,8 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.utils import remove_weight_norm, weight_norm
-from torch.nn.utils.parametrizations import spectral_norm
+from torch.nn.utils.parametrizations import spectral_norm, weight_norm
 from torch.utils.checkpoint import checkpoint
 
 from rvc.lib.algorithm.commons import get_padding
