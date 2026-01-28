@@ -1,10 +1,11 @@
-import os
 import glob
-import torch
+import os
+from collections import OrderedDict
+
+import matplotlib.pyplot as plt
 import numpy as np
 import soundfile as sf
-from collections import OrderedDict
-import matplotlib.pyplot as plt
+import torch
 
 MATPLOTLIB_FLAG = False
 
@@ -41,9 +42,9 @@ def load_checkpoint(checkpoint_path, model, optimizer=None, load_opt=1):
         optimizer (torch.optim.Optimizer, optional): The optimizer to load the state from. Defaults to None.
         load_opt (int, optional): Whether to load the optimizer state. Defaults to 1.
     """
-    assert os.path.isfile(
-        checkpoint_path
-    ), f"Checkpoint file not found: {checkpoint_path}"
+    assert os.path.isfile(checkpoint_path), (
+        f"Checkpoint file not found: {checkpoint_path}"
+    )
 
     checkpoint_dict = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     checkpoint_dict = replace_keys_in_dict(
@@ -188,8 +189,10 @@ def plot_spectrogram_to_numpy(spectrogram):
     plt.tight_layout()
 
     fig.canvas.draw()
-    data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-    data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    buf = fig.canvas.renderer.buffer_rgba()
+    w, h = fig.canvas.get_width_height()
+    data = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[..., :3]
+
     plt.close(fig)
     return data
 
