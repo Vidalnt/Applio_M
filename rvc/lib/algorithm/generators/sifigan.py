@@ -1,5 +1,7 @@
 import numpy as np
 import torch
+from torch.nn.utils import remove_weight_norm
+from torch.nn.utils.parametrizations import weight_norm
 
 
 def pd_indexing(x, d, dilation, batch_index, ch_index):
@@ -512,7 +514,7 @@ class SiFiGANGenerator(torch.nn.Module):
     def remove_weight_norm(self):
         def _remove_weight_norm(m):
             try:
-                torch.nn.utils.remove_weight_norm(m)
+                remove_weight_norm(m)
             except ValueError:
                 return
 
@@ -523,6 +525,6 @@ class SiFiGANGenerator(torch.nn.Module):
             if isinstance(m, torch.nn.Conv1d) or isinstance(
                 m, torch.nn.ConvTranspose1d
             ):
-                torch.nn.utils.weight_norm(m)
+                weight_norm(m)
 
         self.apply(_apply_weight_norm)
