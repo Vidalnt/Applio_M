@@ -699,10 +699,21 @@ def train_and_evaluate(
                 model_output = net_g(
                     phone, phone_lengths, pitch, pitchf, spec, spec_lengths, sid
                 )
-                y_hat, ids_slice, x_mask, z_mask, (z, z_p, m_p, logs_p, m_q, logs_q) = (
-                    model_output
-                )
-                # slice of the original waveform to match a generate slice
+
+                (
+                    y_hat_raw,
+                    ids_slice,
+                    x_mask,
+                    z_mask,
+                    (z, z_p, m_p, logs_p, m_q, logs_q),
+                ) = model_output
+
+                if isinstance(y_hat_raw, tuple):
+                    y_hat, har_source = y_hat_raw
+                else:
+                    y_hat = y_hat_raw
+                    har_source = None
+
                 if randomized:
                     wave = commons.slice_segments(
                         wave,
@@ -762,6 +773,13 @@ def train_and_evaluate(
             loss_fm = feature_loss(fmap_r, fmap_g)
             loss_gen, _ = generator_loss(y_d_hat_g)
             loss_gen_all = loss_gen + loss_fm + loss_mel + loss_kl
+
+            if har_source is not None:
+                wave_subband = F.interpolate(
+                    wave, size=har_source.shape[-1], mode="linear"
+                )
+                loss_sub = F.l1_loss(har_source, wave_subband) * 0.5
+                loss_gen_all += loss_sub
 
             if loss_gen_all < lowest_value["value"]:
                 lowest_value = {
@@ -893,6 +911,8 @@ def train_and_evaluate(
                         o, *_ = net_g.module.infer(*reference)
                     else:
                         o, *_ = net_g.infer(*reference)
+                    if isinstance(o, tuple):
+                        o = o[0]
             audio_dict = {f"gen/audio_{global_step:07d}": o[0, :, :]}
             summarize(
                 writer=writer,
