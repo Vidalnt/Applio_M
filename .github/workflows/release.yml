@@ -50,7 +50,7 @@ jobs:
 
           ### Installation Steps
           - **Download Compiled Version**: Get the zip from [this link](https://huggingface.co/IAHispano/Applio/resolve/main/Compiled/Windows/ApplioV${{ steps.check-version.outputs.tag }}.zip).
-          - **Run Applio**: Extract the `.zip` file, then open the \`run-applio.bat\` file.
+          - **Run Applio**: Extract the \`.zip\` file, then open the \`run-applio.bat\` file.
 
           **Full Changelog**: https://github.com/IAHispano/Applio/compare/${{ steps.check-version.outputs.previous-version }}...${{ steps.check-version.outputs.tag }}
 
@@ -78,40 +78,43 @@ jobs:
             | jq -r '.[] | .sha + " " + .commit.message' > commits.txt
           cat commits.txt
 
-      - name: Summarize changelog with Groq API
+      - name: Summarize changelog
         if: steps.check-version.outputs.tag
         id: summarize-changelog
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           changelog=$(cat commits.txt)
-          json_payload=$(jq -n \
-            --arg content "$changelog" \
+
+          jq -n \
+            --arg input "$changelog" \
+            --arg system_instruction "You will receive a commit history. Your task is to extract and present the most relevant changes as a concise list (0-15 items), each item preceded by a bullet point (-). Each entry should be as brief as possible, ideally 1 to 4 words, summarizing the key updates and enhancements. Ignore changes related to .yml files, Git Keep, chore(format), \"colab,\" \"Major fix,\" and phrases like \"Updating Files\" or similar cases (e.g., \"Update Applio (train.py, preprocess.py, core.py)\"). Summarization Rules: Summarize commits like Update ___.py, Fix _____.py, Disable, Delete, or Merge as \"Fixing Code Issues\" and include specific details in parentheses only if they refer to a specific feature, module, or file name. For entries starting with \"Add,\" \"Fix,\" \"Improving,\" \"Improve,\" \"Rework,\" \"Update,\" or \"Updating,\" ensure they are merged into a single entry, with specific details included in parentheses. Ensure the details within parentheses are concise and directly relevant to the change, focusing on the affected feature or module. If multiple commits fall under \"Fixing Code Issues,\" consolidate them into one entry, mentioning only the major areas or modules affected without listing every specific fix. If the commit is related to \"tab\" or \"UI,\" merge it under \"Improving Code\" and include specific details in parentheses if necessary. Replace entries that use phrases like \"Updating Files\" or similar detailed updates (e.g., \"Update Applio (train.py, preprocess.py, core.py)\") with a summary of the actual changes or enhancements made, focusing on the specific impact or feature. Eliminate duplicates by merging similar entries into a single summary where possible. Ensure each entry is distinct and avoids repetition of similar details or terminology. Final Checks: After generating the list, review it to identify and merge any similar entries or duplicates. Ensure that each entry is concise, distinct, and free of redundancy. Limit the list to a maximum of 5 items. Each entry should start with an uppercase letter. Exclude any entries that include \"Major fix\" and ignore them if found. Note: Do not include any commentary or additional text; return only the list." \
             '{
-              messages: [
-                {
-                  role: "system",
-                  content: "You will receive a commit history. Your task is to extract and present the most relevant changes as a concise list (0-15 items), each item preceded by a bullet point (-). Each entry should be as brief as possible, ideally 1 to 4 words, summarizing the key updates and enhancements. Ignore changes related to .yml files, Git Keep, chore(format), \"colab,\" \"Major fix,\" and phrases like \"Updating Files\" or similar cases (e.g., \"Update Applio (train.py, preprocess.py, core.py)\"). Summarization Rules: Summarize commits like Update ___.py, Fix _____.py, Disable, Delete, or Merge as \"Fixing Code Issues\" and include specific details in parentheses only if they refer to a specific feature, module, or file name. For entries starting with \"Add,\" \"Fix,\" \"Improving,\" \"Improve,\" \"Rework,\" \"Update,\" or \"Updating,\" ensure they are merged into a single entry, with specific details included in parentheses. Ensure the details within parentheses are concise and directly relevant to the change, focusing on the affected feature or module. If multiple commits fall under \"Fixing Code Issues,\" consolidate them into one entry, mentioning only the major areas or modules affected without listing every specific fix. If the commit is related to \"tab\" or \"UI,\" merge it under \"Improving Code\" and include specific details in parentheses if necessary. Replace entries that use phrases like \"Updating Files\" or similar detailed updates (e.g., \"Update Applio (train.py, preprocess.py, core.py)\") with a summary of the actual changes or enhancements made, focusing on the specific impact or feature. Eliminate duplicates by merging similar entries into a single summary where possible. Ensure each entry is distinct and avoids repetition of similar details or terminology. Final Checks: After generating the list, review it to identify and merge any similar entries or duplicates. Ensure that each entry is concise, distinct, and free of redundancy. Limit the list to a maximum of 5 items. Each entry should start with an uppercase letter. Exclude any entries that include \"Major fix\" and ignore them if found. Note: Do not include any commentary or additional text; return only the list.  This prompt could be improved by adding examples of commit messages and their expected summaries to provide clearer guidance."
-                },
-                {
-                  role: "user",
-                  content: $content
-                }
-              ],
-              model: "openai/gpt-oss-120b",
-              temperature: 0.6,
-              max_tokens: 600,
-              top_p: 1,
-              stream: false,
-              stop: null
-            }')
+              model: "gemini-3.6-flash",
+              input: $input,
+              system_instruction: $system_instruction,
+              generation_config: {
+                max_output_tokens: 8192,
+                thinking_level: "medium"
+              }
+            }' > request.json
 
-          echo "json_payload: $json_payload"
+          echo "Request payload:"
+          cat request.json
 
-          curl "https://api.groq.com/openai/v1/chat/completions" \
-            -X POST \
+          curl -s -X POST \
             -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${{ secrets.GROQ_API_KEY }}" \
-            -d "$json_payload" \
-            | jq -r '.choices[0].message.content' > summarized_changelog.txt
+            -H "x-goog-api-key: $GEMINI_API_KEY" \
+            "https://generativelanguage.googleapis.com/v1beta/interactions" \
+            -d @request.json > response.json
+
+          echo "Raw response:"
+          cat response.json
+
+          jq -r '.outputs[] | select(.type == "text") | .text' response.json > summarized_changelog.txt
+
+          echo "Summarized changelog:"
+          cat summarized_changelog.txt
 
       - name: Set up Node.js
         if: steps.check-version.outputs.tag
@@ -157,28 +160,14 @@ jobs:
             - **Security Settings**: Temporarily disable your antivirus and firewall to prevent any issues with missing dependencies during installation.
             ### Installation Steps
             - **Download Compiled Version**: Get the zip from [this link](https://huggingface.co/IAHispano/Applio/resolve/main/Compiled/Windows/ApplioV${{ steps.check-version.outputs.tag }}.zip).
-            - **Run Applio**: Extract the `.zip` file, then open the \`run-applio.bat\` file.
+            - **Run Applio**: Extract the \`.zip\` file, then open the \`run-applio.bat\` file.
           ## What's New in This Release
             ${changelog}
 
           **Full Changelog**: https://github.com/IAHispano/Applio/compare/${{ steps.check-version.outputs.previous-version }}...${{ steps.check-version.outputs.tag }}  " \
-            -o "IAHispano" \
-            -r "Applio" \
+            -o "Vidalnt" \
+            -r "Applio_M" \
             -w /home/runner/work/Applio/Applio \
             -y
         env:
           GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
-
-      - name: Trigger Pre-Compiled
-        if: steps.check-version.outputs.tag
-        uses: actions/github-script@v6
-        with:
-          script: |
-            await github.rest.actions.createWorkflowDispatch({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            workflow_id: 'pre_compiled.yml',
-            ref: context.ref,
-            });
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
